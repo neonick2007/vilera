@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
 # BTS - Bandwidth Telemetry System - Cloud Edition
-# Versión con diseño optimizado para pantalla
+# Versión con actualización fluida y diseño optimizado
 
 import dash
 from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
 import time
 import routeros_api
@@ -26,85 +26,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# INTERFACES (IDs válidos para HTML)
+# COLORES MÁS VIVOS
 # ============================================
 COLORS = [
-    {'down': '#00f3ff', 'up': '#008b91', 'fill': 'rgba(0,243,255,0.06)'},
-    {'down': '#70ff00', 'up': '#459900', 'fill': 'rgba(112,255,0,0.06)'},
-    {'down': '#ffb800', 'up': '#a37500', 'fill': 'rgba(255,184,0,0.06)'},
-    {'down': '#ff007a', 'up': '#a6004f', 'fill': 'rgba(255,0,122,0.06)'},
-    {'down': '#a855f7', 'up': '#7c3aed', 'fill': 'rgba(168,85,247,0.06)'},
-    {'down': '#f472b6', 'up': '#db2777', 'fill': 'rgba(244,114,182,0.06)'},
-    {'down': '#f59e0b', 'up': '#b45309', 'fill': 'rgba(245,158,11,0.06)'},
+    {'down': '#00d4ff', 'up': '#0088aa', 'fill': 'rgba(0,212,255,0.08)'},
+    {'down': '#00ff88', 'up': '#00aa55', 'fill': 'rgba(0,255,136,0.08)'},
+    {'down': '#ffaa00', 'up': '#cc7700', 'fill': 'rgba(255,170,0,0.08)'},
+    {'down': '#ff3366', 'up': '#cc0033', 'fill': 'rgba(255,51,102,0.08)'},
+    {'down': '#aa66ff', 'up': '#7733cc', 'fill': 'rgba(170,102,255,0.08)'},
+    {'down': '#ff66aa', 'up': '#cc3377', 'fill': 'rgba(255,102,170,0.08)'},
+    {'down': '#66ffcc', 'up': '#33cc99', 'fill': 'rgba(102,255,204,0.08)'},
 ]
 
 # ============================================
-# INTERFACES CON MAPEO CORRECTO
+# INTERFACES CON LÍMITES AJUSTADOS
 # ============================================
 INTERFACES = [
-    {
-        'id': 'sfp1-WAN-FIBEX',
-        'color': COLORS[0],
-        'limit': 100,  # ⬇️ Reducido para mejor visualización
-        'display_name': '🌐 WAN',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': 'sfp1-WAN-FIBEX'
-    },
-    {
-        'id': 'bridge',
-        'color': COLORS[1],
-        'limit': 50,   # ⬇️ Reducido
-        'display_name': '🔗 Bridge',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': 'bridge'
-    },
-    {
-        'id': 'ether2',
-        'color': COLORS[2],
-        'limit': 50,   # ⬇️ Reducido
-        'display_name': '🏢 Clientes',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': 'ether2'
-    },
-    {
-        'id': 'ether1',
-        'color': COLORS[3],
-        'limit': 20,   # ⬇️ Reducido
-        'display_name': '🏠 Casa',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': 'ether1'
-    },
-    {
-        'id': 'pppoe-andres-bodega',
-        'color': COLORS[4],
-        'limit': 20,   # ⬇️ Reducido
-        'display_name': '👤 Andrés',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': '<pppoe-andres.bodega>'
-    },
-    {
-        'id': 'pppoe-isaura-zambrano',
-        'color': COLORS[5],
-        'limit': 20,   # ⬇️ Reducido
-        'display_name': '👤 Isaura',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': '<pppoe-isaura.zambrano>'
-    },
-    {
-        'id': 'ether6',
-        'color': COLORS[6],
-        'limit': 30,   # ⬇️ Reducido
-        'display_name': '📶 WiFi',
-        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': [],
-        'mikrotik_name': 'ether6'
-    },
+    {'id': 'sfp1-WAN-FIBEX', 'color': COLORS[0], 'limit': 20, 'display_name': '🌐 WAN', 'mikrotik_name': 'sfp1-WAN-FIBEX'},
+    {'id': 'bridge', 'color': COLORS[1], 'limit': 10, 'display_name': '🔗 Bridge', 'mikrotik_name': 'bridge'},
+    {'id': 'ether2', 'color': COLORS[2], 'limit': 10, 'display_name': '🏢 Clientes', 'mikrotik_name': 'ether2'},
+    {'id': 'ether1', 'color': COLORS[3], 'limit': 15, 'display_name': '🏠 Casa', 'mikrotik_name': 'ether1'},
+    {'id': 'pppoe-andres-bodega', 'color': COLORS[4], 'limit': 10, 'display_name': '👤 Andrés', 'mikrotik_name': '<pppoe-andres.bodega>'},
+    {'id': 'pppoe-isaura-zambrano', 'color': COLORS[5], 'limit': 15, 'display_name': '👤 Isaura', 'mikrotik_name': '<pppoe-isaura.zambrano>'},
+    {'id': 'ether6', 'color': COLORS[6], 'limit': 10, 'display_name': '📶 WiFi', 'mikrotik_name': 'ether6'},
 ]
 
 ALL_IDS = [i['id'] for i in INTERFACES]
@@ -118,7 +62,7 @@ class BTSDataManager:
         self.lock = threading.Lock()
         self.stats = {uid: {
             'd_last': 0, 'u_last': 0, 'time': time.time(),
-            'x': [], 'yd': [], 'yu': []
+            'd': 0.0, 'u': 0.0
         } for uid in ALL_IDS}
         self.hardware = {'cpu': 0, 'ram': 0}
         self.last_ts = ""
@@ -179,16 +123,10 @@ def fetch_mikrotik_data():
                     data_manager.stats[uid].update({
                         'd_last': rx,
                         'u_last': tx,
-                        'time': now
+                        'time': now,
+                        'd': d_mbps,
+                        'u': u_mbps
                     })
-                    
-                    data_manager.stats[uid]['x'].append(timestamp)
-                    data_manager.stats[uid]['yd'].append(d_mbps)
-                    data_manager.stats[uid]['yu'].append(u_mbps)
-                    
-                    if len(data_manager.stats[uid]['x']) > 30:
-                        for key in ['x', 'yd', 'yu']:
-                            data_manager.stats[uid][key].pop(0)
 
             if raw_resource:
                 res = raw_resource[0]
@@ -208,10 +146,10 @@ def fetch_mikrotik_data():
             connection = None
             time.sleep(min(30, consecutive_failures * 2))
         
-        time.sleep(2)
+        time.sleep(1)  # Actualización cada 1 segundo
 
 # ============================================
-# FUNCIÓN DE GAUGE - VERSIÓN COMPACTA
+# FUNCIÓN DE GAUGE - OPTIMIZADA
 # ============================================
 def make_gauge(val, color, title, limit=None, is_percentage=False):
     if is_percentage:
@@ -234,24 +172,24 @@ def make_gauge(val, color, title, limit=None, is_percentage=False):
         number={
             'valueformat': '.1f',
             'suffix': unit,
-            'font': {'size': 14, 'color': 'white', 'family': 'Share Tech Mono'}
+            'font': {'size': 13, 'color': 'white', 'family': 'Share Tech Mono'}
         },
         gauge={
             'axis': {
                 'range': [0, r_max],
-                'tickfont': {'size': 6, 'color': '#666'},
-                'tickcolor': '#333',
+                'tickfont': {'size': 5, 'color': '#555'},
+                'tickcolor': '#222',
                 'nticks': 3
             },
-            'bar': {'color': bar_color, 'thickness': 0.25},
-            'bgcolor': 'rgba(255,255,255,0.02)',
+            'bar': {'color': bar_color, 'thickness': 0.35},
+            'bgcolor': 'rgba(255,255,255,0.01)',
             'borderwidth': 0,
             'steps': [
-                {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.01)'},
-                {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.03)'},
-                {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.05)'},
+                {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.005)'},
+                {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.02)'},
+                {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.03)'},
             ],
-            'threshold': {'line': {'color': bar_color, 'width': 1.5}, 'thickness': 0.6, 'value': display_val}
+            'threshold': {'line': {'color': bar_color, 'width': 1.5}, 'thickness': 0.5, 'value': display_val}
         }
     ))
 
@@ -259,94 +197,97 @@ def make_gauge(val, color, title, limit=None, is_percentage=False):
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         autosize=True,
-        margin=dict(l=4, r=4, t=20, b=4),
+        margin=dict(l=2, r=2, t=16, b=2),
         font={'family': 'Share Tech Mono'},
-        height=110,
+        height=85,
         title={
             'text': f'<b>{title}</b>',
-            'font': {'color': color, 'size': 8, 'family': 'Share Tech Mono'},
-            'y': 0.88,
+            'font': {'color': color, 'size': 7, 'family': 'Share Tech Mono'},
+            'y': 0.82,
             'x': 0.5
         }
     )
     return fig
 
 # ============================================
-# APLICACIÓN DASH - VERSIÓN COMPACTA
+# APLICACIÓN DASH - OPTIMIZADA
 # ============================================
 app = dash.Dash(__name__)
 server = app.server
 
+# CSS personalizado para mejor rendimiento
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>BTS - Bandwidth Telemetry</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { background: #0a0e1a; overflow: hidden; font-family: 'Share Tech Mono', monospace; }
+            .dashboard { display: flex; flex-direction: column; height: 100vh; padding: 4px; gap: 3px; }
+            .header { display: flex; justify-content: space-between; align-items: center; padding: 2px 8px; border-bottom: 1px solid rgba(0,212,255,0.06); flex-shrink: 0; }
+            .header-title { display: flex; align-items: center; gap: 6px; }
+            .header-title h1 { color: #00d4ff; font-size: 13px; letter-spacing: 2px; font-weight: bold; }
+            .header-title span { color: rgba(0,212,255,0.2); font-size: 9px; }
+            .header-status { color: rgba(0,212,255,0.3); font-size: 9px; }
+            .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; flex: 1; min-height: 0; }
+            .card { background: rgba(6,10,18,0.85); border-radius: 3px; border: 1px solid rgba(0,212,255,0.04); padding: 1px; display: flex; flex-direction: column; overflow: hidden; }
+            .card-inner { display: flex; flex-direction: row; height: 100%; gap: 1px; }
+            .card-half { flex: 1; min-width: 0; padding: 1px; }
+            .graph-container { height: 100%; width: 100%; }
+            .graph-container .js-plotly-plot { height: 100% !important; width: 100% !important; }
+            .graph-container .plot-container { height: 100% !important; width: 100% !important; }
+            .graph-container svg { height: 100% !important; width: 100% !important; }
+            ::-webkit-scrollbar { display: none; }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>{%config%}{%scripts%}{%renderer%}</footer>
+    </body>
+</html>
+'''
+
 app.layout = html.Div(
-    style={
-        'backgroundColor': '#0a0e1a',
-        'padding': '8px',
-        'minHeight': '100vh',
-        'fontFamily': 'Share Tech Mono, monospace',
-        'display': 'flex',
-        'flexDirection': 'column',
-        'gap': '4px'
-    },
+    className='dashboard',
     children=[
-        # Header compacto
+        # Header
         html.Div(
-            style={
-                'display': 'flex',
-                'justifyContent': 'space-between',
-                'alignItems': 'center',
-                'padding': '4px 12px',
-                'borderBottom': '1px solid rgba(0,243,255,0.08)',
-                'flexShrink': 0
-            },
+            className='header',
             children=[
                 html.Div(
-                    style={'display': 'flex', 'alignItems': 'center', 'gap': '10px'},
+                    className='header-title',
                     children=[
-                        html.Span("📡", style={'fontSize': '20px'}),
-                        html.Span(
-                            "BANDWIDTH TELEMETRY",
-                            style={'color': '#00f3ff', 'fontSize': '14px', 'letterSpacing': '3px', 'fontWeight': 'bold'}
-                        ),
-                        html.Span(
-                            "| 7 interfaces",
-                            style={'color': 'rgba(0,243,255,0.4)', 'fontSize': '10px'}
-                        )
+                        html.Span("📡", style={'fontSize': '16px'}),
+                        html.H1("BANDWIDTH TELEMETRY"),
+                        html.Span("| 7 interfaces")
                     ]
                 ),
                 html.Div(
                     id='ts-display',
-                    style={'color': 'rgba(0,243,255,0.5)', 'fontSize': '10px'}
+                    className='header-status'
                 )
             ]
         ),
         
-        # Grid de gauges - 4 columnas para mejor distribución
+        # Grid de gauges
         html.Div(
-            style={
-                'display': 'grid',
-                'gridTemplateColumns': 'repeat(4, 1fr)',
-                'gap': '4px',
-                'flex': '1'
-            },
+            className='grid',
             children=[html.Div(
-                id=f"box-{uid}",
-                style={
-                    'background': 'rgba(6,10,18,0.9)',
-                    'borderRadius': '6px',
-                    'border': '1px solid rgba(0,243,255,0.06)',
-                    'padding': '2px',
-                    'display': 'flex',
-                    'flexDirection': 'column'
-                }
+                className='card',
+                id=f"box-{uid}"
             ) for uid in ALL_BOX_IDS]
         ),
         
-        dcc.Interval(id='tick', interval=2000)
+        dcc.Interval(id='tick', interval=1000)  # Actualización cada 1 segundo
     ]
 )
 
 # ============================================
-# CALLBACKS
+# CALLBACKS - OPTIMIZADOS
 # ============================================
 @app.callback(
     [Output(f"box-{uid}", "children") for uid in ALL_BOX_IDS] +
@@ -361,25 +302,25 @@ def update_ui(n):
             hw_cpu = data_manager.hardware['cpu']
             hw_ram = data_manager.hardware['ram']
             card_contents.append(html.Div(
-                style={'display': 'flex', 'flexDirection': 'row', 'height': '100%'},
+                className='card-inner',
                 children=[
                     html.Div(
-                        style={'flex': '1', 'padding': '2px'},
+                        className='card-half',
                         children=[
                             dcc.Graph(
-                                figure=make_gauge(hw_cpu, '#00f3ff', "CPU", is_percentage=True),
-                                config={'displayModeBar': False},
-                                style={'height': '100%'}
+                                figure=make_gauge(hw_cpu, '#00d4ff', "CPU", is_percentage=True),
+                                config={'displayModeBar': False, 'responsive': True},
+                                className='graph-container'
                             )
                         ]
                     ),
                     html.Div(
-                        style={'flex': '1', 'padding': '2px'},
+                        className='card-half',
                         children=[
                             dcc.Graph(
-                                figure=make_gauge(hw_ram, '#ff007a', "RAM", is_percentage=True),
-                                config={'displayModeBar': False},
-                                style={'height': '100%'}
+                                figure=make_gauge(hw_ram, '#ff3366', "RAM", is_percentage=True),
+                                config={'displayModeBar': False, 'responsive': True},
+                                className='graph-container'
                             )
                         ]
                     )
@@ -389,38 +330,39 @@ def update_ui(n):
             item = next((i for i in INTERFACES if i['id'] == box_id), None)
             if item:
                 st = data_manager.stats[box_id]
-                d_mbps = st['yd'][-1] if st['yd'] else 0
-                u_mbps = st['yu'][-1] if st['yu'] else 0
+                d_mbps = st['d']
+                u_mbps = st['u']
                 color = item['color']['down']
                 card_contents.append(html.Div(
-                    style={'display': 'flex', 'flexDirection': 'row', 'height': '100%'},
+                    className='card-inner',
                     children=[
                         html.Div(
-                            style={'flex': '1', 'padding': '1px'},
+                            className='card-half',
                             children=[
                                 dcc.Graph(
                                     figure=make_gauge(d_mbps, color, "▼", item['limit']),
-                                    config={'displayModeBar': False},
-                                    style={'height': '100%'}
+                                    config={'displayModeBar': False, 'responsive': True},
+                                    className='graph-container'
                                 )
                             ]
                         ),
                         html.Div(
-                            style={'flex': '1', 'padding': '1px'},
+                            className='card-half',
                             children=[
                                 dcc.Graph(
                                     figure=make_gauge(u_mbps, item['color']['up'], "▲", item['limit']),
-                                    config={'displayModeBar': False},
-                                    style={'height': '100%'}
+                                    config={'displayModeBar': False, 'responsive': True},
+                                    className='graph-container'
                                 )
                             ]
                         )
                     ]
                 ))
     
-    status = "🟢" if data_manager.connection_status else "🔴"
+    status = "●" if data_manager.connection_status else "○"
+    color = "#00ff88" if data_manager.connection_status else "#ff3366"
     ts = data_manager.last_ts or "---"
-    return card_contents + [f"{status} {ts}"]
+    return card_contents + [html.Span(f"{ts}", style={'color': color})]
 
 # ============================================
 # INICIO
