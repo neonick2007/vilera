@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - CORREGIDO
+# BTS - Bandwidth Telemetry System - CON SESIÓN PERSISTENTE
 
 import dash
 from dash import dcc, html
@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# INTERFACES - CON IDs SIMPLES
+# INTERFACES
 # ============================================
 INTERFACES = [
     {'id': 'wan', 'display': 'WAN', 'color': '#00d4ff', 'limit': 50, 'mikrotik': 'sfp1-WAN-FIBEX'},
@@ -38,9 +38,6 @@ INTERFACES = [
 
 ALL_IDS = [i['id'] for i in INTERFACES]
 
-# ============================================
-# FUNCIÓN HEX_TO_RGB (DEFINIDA ANTES DE USARSE)
-# ============================================
 def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip('#')
     return ','.join(str(int(hex_color[i:i+2], 16)) for i in (0, 2, 4))
@@ -58,36 +55,75 @@ class DataStore:
         self.prev_rx = {i['id']: 0 for i in INTERFACES}
         self.prev_tx = {i['id']: 0 for i in INTERFACES}
         self.last_time = time.time()
+        self.api = None
+        self.connection = None
+        self.connected = False
 
 data = DataStore()
 
 # ============================================
-# OBTENER DATOS CON CÁLCULO CORRECTO
+# CONEXIÓN PERSISTENTE A MIKROTIK
+# ============================================
+def connect_mikrotik():
+    """Establece conexión persistente con el MikroTik"""
+    try:
+        if data.connection is None:
+            logger.info("🔗 Estableciendo conexión persistente con MikroTik...")
+            data.connection = routeros_api.RouterOsApiPool(
+                MIKROTIK_HOST,
+                username=MIKROTIK_USER,
+                password=MIKROTIK_PASSWORD,
+                port=MIKROTIK_PORT,
+                plaintext_login=True
+            )
+            data.api = data.connection.get_api()
+            data.connected = True
+            data.online = True
+            logger.info("✅ Conexión persistente establecida")
+            
+            # Inicializar contadores
+            interfaces = data.api.get_resource('/interface').get()
+            for item in INTERFACES:
+                raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
+                if raw:
+                    data.prev_rx[item['id']] = int(raw.get('rx-byte', 0))
+                    data.prev_tx[item['id']] = int(raw.get('tx-byte', 0))
+            data.last_time = time.time()
+            return True
+        return data.connected
+    except Exception as e:
+        logger.error(f"❌ Error de conexión: {e}")
+        data.connected = False
+        data.online = False
+        data.connection = None
+        data.api = None
+        return False
+
+# ============================================
+# OBTENER DATOS - SESIÓN PERSISTENTE
 # ============================================
 def fetch_data():
-    conn = None
     first_run = True
     
     while True:
         try:
-            if conn is None:
-                conn = routeros_api.RouterOsApiPool(
-                    MIKROTIK_HOST,
-                    username=MIKROTIK_USER,
-                    password=MIKROTIK_PASSWORD,
-                    port=MIKROTIK_PORT,
-                    plaintext_login=True
-                )
-                api = conn.get_api()
-                data.online = True
+            # Si no hay conexión, intentar conectar
+            if not data.connected or data.api is None:
+                logger.info("🔄 Reconectando...")
+                connect_mikrotik()
+                if not data.connected:
+                    time.sleep(5)
+                    continue
                 first_run = True
 
-            interfaces = api.get_resource('/interface').get()
-            resource = api.get_resource('/system/resource').get()
+            # Obtener datos usando la misma sesión
+            interfaces = data.api.get_resource('/interface').get()
+            resource = data.api.get_resource('/system/resource').get()
 
             now = time.time()
             dt = now - data.last_time
             data.last_time = now
+            data.ts = datetime.now().strftime("%H:%M:%S")
 
             for item in INTERFACES:
                 raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
@@ -122,6 +158,7 @@ def fetch_data():
                     }
             
             first_run = False
+            data.online = True
 
             if resource:
                 r = resource[0]
@@ -131,17 +168,20 @@ def fetch_data():
                     'cpu': float(r.get('cpu-load', 0)),
                     'ram': round(((total - free) / total) * 100, 1)
                 }
-            
-            data.ts = datetime.now().strftime("%H:%M:%S")
 
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"❌ Error en fetch: {e}")
             data.online = False
-            conn = None
+            data.connected = False
+            data.connection = None
+            data.api = None
             time.sleep(5)
         
         time.sleep(0.5)
 
+# ============================================
+# INICIAR HILO DE DATOS
+# ============================================
 threading.Thread(target=fetch_data, daemon=True).start()
 
 # ============================================
