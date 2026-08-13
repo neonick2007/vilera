@@ -14,7 +14,7 @@ import os
 import logging
 
 # ============================================
-# CONFIGURACIÓN - Variables de entorno
+# CONFIGURACIÓN
 # ============================================
 MIKROTIK_HOST = os.environ.get('MIKROTIK_HOST', '190.120.249.39')
 MIKROTIK_USER = os.environ.get('MIKROTIK_USER', 'neoapi')
@@ -25,9 +25,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# CONFIGURACIÓN DE INTERFACES - 7 INTERFACES
+# INTERFACES (IDs válidos para HTML)
 # ============================================
-
 COLORS = [
     {'down': '#00f3ff', 'up': '#008b91', 'fill': 'rgba(0,243,255,0.06)'},
     {'down': '#70ff00', 'up': '#459900', 'fill': 'rgba(112,255,0,0.06)'},
@@ -38,7 +37,9 @@ COLORS = [
     {'down': '#f59e0b', 'up': '#b45309', 'fill': 'rgba(245,158,11,0.06)'},
 ]
 
-# ⚠️ IMPORTANTE: IDS VÁLIDOS (solo letras, números, guiones y guiones bajos)
+# ============================================
+# INTERFACES CON MAPEO CORRECTO
+# ============================================
 INTERFACES = [
     {
         'id': 'sfp1-WAN-FIBEX',
@@ -46,7 +47,8 @@ INTERFACES = [
         'limit': 1000,
         'display_name': '🌐 WAN FIBEX',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': 'sfp1-WAN-FIBEX'  # Nombre exacto en MikroTik
     },
     {
         'id': 'bridge',
@@ -54,7 +56,8 @@ INTERFACES = [
         'limit': 950,
         'display_name': '🔗 Bridge LAN',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': 'bridge'
     },
     {
         'id': 'ether2',
@@ -62,7 +65,8 @@ INTERFACES = [
         'limit': 500,
         'display_name': '🏢 Taller Clientes',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': 'ether2'
     },
     {
         'id': 'ether1',
@@ -70,7 +74,8 @@ INTERFACES = [
         'limit': 100,
         'display_name': '🏠 Casa 11',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': 'ether1'
     },
     {
         'id': 'pppoe-andres-bodega',
@@ -78,7 +83,8 @@ INTERFACES = [
         'limit': 100,
         'display_name': '👤 Andrés Bodega',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': '<pppoe-andres.bodega>'  # ✅ Nombre exacto con <>
     },
     {
         'id': 'pppoe-isaura-zambrano',
@@ -86,7 +92,8 @@ INTERFACES = [
         'limit': 100,
         'display_name': '👤 Isaura Zambrano',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': '<pppoe-isaura.zambrano>'  # ✅ Nombre exacto con <>
     },
     {
         'id': 'ether6',
@@ -94,7 +101,8 @@ INTERFACES = [
         'limit': 200,
         'display_name': '📶 WiFi Daniel',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
-        'vlans': []
+        'vlans': [],
+        'mikrotik_name': 'ether6'
     },
 ]
 
@@ -114,31 +122,21 @@ class BTSDataManager:
         self.hardware = {'cpu': 0, 'ram': 0}
         self.last_ts = ""
         self.connection_status = False
+        self.last_error = ""
 
 data_manager = BTSDataManager()
-
-# ============================================
-# MAPEO DE NOMBRES (MikroTik -> Dashboard)
-# ============================================
-NAME_MAP = {
-    'sfp1-WAN-FIBEX': 'sfp1-WAN-FIBEX',
-    'bridge': 'bridge',
-    'ether2': 'ether2',
-    'ether1': 'ether1',
-    '<pppoe-andres.bodega>': 'pppoe-andres-bodega',
-    '<pppoe-isaura.zambrano>': 'pppoe-isaura-zambrano',
-    'ether6': 'ether6'
-}
 
 # ============================================
 # FUNCIÓN DE OBTENCIÓN DE DATOS
 # ============================================
 def fetch_mikrotik_data():
     connection = None
+    consecutive_failures = 0
+    
     while True:
         try:
             if connection is None:
-                logger.info(f"Conectando a {MIKROTIK_HOST}")
+                logger.info(f"🔗 Conectando a {MIKROTIK_HOST}:{MIKROTIK_PORT}")
                 connection = routeros_api.RouterOsApiPool(
                     MIKROTIK_HOST,
                     username=MIKROTIK_USER,
@@ -148,40 +146,70 @@ def fetch_mikrotik_data():
                 )
                 api = connection.get_api()
                 data_manager.connection_status = True
-                logger.info("✅ Conectado")
+                data_manager.last_error = ""
+                consecutive_failures = 0
+                logger.info("✅ Conectado al MikroTik")
 
+            # Obtener todas las interfaces
             raw_data = api.get_resource('/interface').get()
+            
+            # Debug: imprimir nombres de interfaces encontradas
+            if consecutive_failures == 0:
+                names = [item.get('name', '') for item in raw_data]
+                logger.info(f"📋 Interfaces en MikroTik: {names}")
+
+            # Obtener recursos del sistema
             raw_resource = api.get_resource('/system/resource').get()
             timestamp = datetime.now().strftime("%H:%M:%S")
             data_manager.last_ts = timestamp
 
-            for uid in ALL_IDS:
-                # Buscar el nombre real en el MikroTik usando el mapa
-                mikrotik_name = next((k for k, v in NAME_MAP.items() if v == uid), uid)
-                raw = next((item for item in raw_data if item.get('name') == mikrotik_name), {})
-                rx = int(raw.get('rx-byte', 0)) if raw else 0
-                tx = int(raw.get('tx-byte', 0)) if raw else 0
+            # Procesar cada interfaz del dashboard
+            for item in INTERFACES:
+                uid = item['id']
+                mikrotik_name = item['mikrotik_name']
                 
-                now = time.time()
-                dt = now - data_manager.stats[uid]['time']
+                # Buscar la interfaz en los datos del MikroTik
+                raw = next((i for i in raw_data if i.get('name') == mikrotik_name), {})
                 
-                if dt > 0:
-                    d_mbps = round((((rx - data_manager.stats[uid]['d_last']) * 8) / dt) / 1e6, 2) \
-                        if data_manager.stats[uid]['d_last'] > 0 else 0
-                    u_mbps = round((((tx - data_manager.stats[uid]['u_last']) * 8) / dt) / 1e6, 2) \
-                        if data_manager.stats[uid]['u_last'] > 0 else 0
+                if raw:
+                    rx = int(raw.get('rx-byte', 0))
+                    tx = int(raw.get('tx-byte', 0))
+                    running = raw.get('running', False)
+                    
+                    now = time.time()
+                    dt = now - data_manager.stats[uid]['time']
+                    
+                    if dt > 0 and data_manager.stats[uid]['d_last'] > 0:
+                        d_mbps = round((((rx - data_manager.stats[uid]['d_last']) * 8) / dt) / 1e6, 2)
+                        u_mbps = round((((tx - data_manager.stats[uid]['u_last']) * 8) / dt) / 1e6, 2)
+                    else:
+                        d_mbps = 0.0
+                        u_mbps = 0.0
+
+                    data_manager.stats[uid].update({
+                        'd_last': rx,
+                        'u_last': tx,
+                        'time': now
+                    })
+                    
+                    # Guardar histórico (últimos 30 puntos)
+                    data_manager.stats[uid]['x'].append(timestamp)
+                    data_manager.stats[uid]['yd'].append(d_mbps)
+                    data_manager.stats[uid]['yu'].append(u_mbps)
+                    
+                    if len(data_manager.stats[uid]['x']) > 30:
+                        for key in ['x', 'yd', 'yu']:
+                            data_manager.stats[uid][key].pop(0)
+                    
+                    # Log para debugging (solo si hay tráfico)
+                    if d_mbps > 1 or u_mbps > 1:
+                        logger.info(f"📊 {uid}: DOWN={d_mbps:.2f} Mbps, UP={u_mbps:.2f} Mbps")
                 else:
-                    d_mbps = u_mbps = 0
+                    # La interfaz no existe en el MikroTik
+                    if consecutive_failures == 0:
+                        logger.warning(f"⚠️ Interfaz '{mikrotik_name}' no encontrada en MikroTik")
 
-                data_manager.stats[uid].update({'d_last': rx, 'u_last': tx, 'time': now})
-                data_manager.stats[uid]['x'].append(timestamp)
-                data_manager.stats[uid]['yd'].append(d_mbps)
-                data_manager.stats[uid]['yu'].append(u_mbps)
-
-                if len(data_manager.stats[uid]['x']) > 30:
-                    for key in ['x', 'yd', 'yu']:
-                        data_manager.stats[uid][key].pop(0)
-
+            # Procesar hardware
             if raw_resource:
                 res = raw_resource[0]
                 cpu_usage = float(res.get('cpu-load', 0))
@@ -189,13 +217,23 @@ def fetch_mikrotik_data():
                 free_mem = float(res.get('free-memory', 0))
                 ram_usage = round(((total_mem - free_mem) / total_mem) * 100, 1)
                 data_manager.hardware = {'cpu': cpu_usage, 'ram': ram_usage}
+                
+                logger.info(f"🖥️ CPU: {cpu_usage:.1f}%, RAM: {ram_usage:.1f}%")
+
+            consecutive_failures = 0
 
         except Exception as e:
-            logger.error(f"Error: {e}")
-            connection = None
+            consecutive_failures += 1
             data_manager.connection_status = False
-            time.sleep(5)
+            data_manager.last_error = str(e)
+            logger.error(f"❌ Error ({consecutive_failures}): {e}")
+            connection = None
+            
+            # Esperar antes de reintentar
+            wait_time = min(30, consecutive_failures * 2)
+            time.sleep(wait_time)
         
+        # Pequeña pausa entre ciclos
         time.sleep(2)
 
 # ============================================
@@ -335,7 +373,8 @@ def update_ui(n):
     
     status = "🟢" if data_manager.connection_status else "🔴"
     ts = data_manager.last_ts or "Esperando datos..."
-    return card_contents + [f"{status} LIVE · {ts} · {len(ALL_IDS)} interfaces"]
+    error = f" ⚠️ {data_manager.last_error}" if data_manager.last_error else ""
+    return card_contents + [f"{status} LIVE · {ts} · {len(ALL_IDS)} interfaces{error}"]
 
 # ============================================
 # INICIO
