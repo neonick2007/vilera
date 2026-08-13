@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - Versión SIN PARPADEO
+# BTS - Bandwidth Telemetry System - SIN PARPADEO CON PATCH
 
 import dash
-from dash import dcc, html, callback_context
-from dash.dependencies import Input, Output, State
+from dash import dcc, html, Patch
+from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import time
 import routeros_api
@@ -12,7 +12,6 @@ from datetime import datetime
 import threading
 import os
 import logging
-import json
 
 # ============================================
 # CONFIGURACIÓN
@@ -116,11 +115,9 @@ def fetch_data():
 threading.Thread(target=fetch_data, daemon=True).start()
 
 # ============================================
-# CREAR GAUGE ESTÁTICO (una sola vez)
+# CREAR GAUGE
 # ============================================
-def create_gauge(id_name, color, limit, display_name, is_hw=False):
-    """Crea un gauge y devuelve la figura y el último valor"""
-    
+def create_gauge(color, limit, display_name, is_hw=False):
     r_max = 100 if is_hw else limit
     
     fig = go.Figure(go.Indicator(
@@ -193,7 +190,6 @@ app.index_string = '''
         .half .plot-container { height:100% !important; width:100% !important; }
         .half svg { height:100% !important; width:100% !important; }
         ::-webkit-scrollbar { display:none; }
-        .sys-card .half { padding:1px; }
     </style>
 </head>
 <body>
@@ -207,14 +203,19 @@ app.index_string = '''
 # CREAR GAUGES INICIALES
 # ============================================
 initial_figs = {}
+graph_ids = []
 
 for item in INTERFACES:
-    initial_figs[f"{item['id']}_d"] = create_gauge(item['id'], item['color']['down'], item['limit'], f"▼ {item['display']}")
-    initial_figs[f"{item['id']}_u"] = create_gauge(item['id'], item['color']['up'], item['limit'], f"▲ {item['display']}")
+    did = f"g-{item['id']}-d"
+    uid = f"g-{item['id']}-u"
+    graph_ids.extend([did, uid])
+    initial_figs[did] = create_gauge(item['color']['down'], item['limit'], f"▼ {item['display']}")
+    initial_figs[uid] = create_gauge(item['color']['up'], item['limit'], f"▲ {item['display']}")
 
 # Hardware
-initial_figs['cpu'] = create_gauge('cpu', '#00d4ff', 100, 'CPU', is_hw=True)
-initial_figs['ram'] = create_gauge('ram', '#ff3366', 100, 'RAM', is_hw=True)
+graph_ids.extend(['g-cpu', 'g-ram'])
+initial_figs['g-cpu'] = create_gauge('#00d4ff', 100, 'CPU', is_hw=True)
+initial_figs['g-ram'] = create_gauge('#ff3366', 100, 'RAM', is_hw=True)
 
 # ============================================
 # LAYOUT
@@ -245,7 +246,7 @@ app.layout = html.Div(
                                 className='half',
                                 children=[dcc.Graph(
                                     id=f"g-{item['id']}-d",
-                                    figure=initial_figs[f"{item['id']}_d"],
+                                    figure=initial_figs[f"g-{item['id']}-d"],
                                     config={'displayModeBar': False, 'responsive': True}
                                 )]
                             ),
@@ -253,7 +254,7 @@ app.layout = html.Div(
                                 className='half',
                                 children=[dcc.Graph(
                                     id=f"g-{item['id']}-u",
-                                    figure=initial_figs[f"{item['id']}_u"],
+                                    figure=initial_figs[f"g-{item['id']}-u"],
                                     config={'displayModeBar': False, 'responsive': True}
                                 )]
                             )
@@ -262,7 +263,7 @@ app.layout = html.Div(
                 ]
             ) for item in INTERFACES] + [
                 html.Div(
-                    className='card sys-card',
+                    className='card',
                     id="box-sys",
                     children=[
                         html.Div(
@@ -272,7 +273,7 @@ app.layout = html.Div(
                                     className='half',
                                     children=[dcc.Graph(
                                         id="g-cpu",
-                                        figure=initial_figs['cpu'],
+                                        figure=initial_figs['g-cpu'],
                                         config={'displayModeBar': False, 'responsive': True}
                                     )]
                                 ),
@@ -280,7 +281,7 @@ app.layout = html.Div(
                                     className='half',
                                     children=[dcc.Graph(
                                         id="g-ram",
-                                        figure=initial_figs['ram'],
+                                        figure=initial_figs['g-ram'],
                                         config={'displayModeBar': False, 'responsive': True}
                                     )]
                                 )
@@ -295,38 +296,45 @@ app.layout = html.Div(
 )
 
 # ============================================
-# CALLBACK - ACTUALIZACIÓN SIN PARPADEO
+# CALLBACK - ACTUALIZACIÓN CON PATCH
 # ============================================
 @app.callback(
-    [Output(f"g-{item['id']}-d", "extendData") for item in INTERFACES] +
-    [Output(f"g-{item['id']}-u", "extendData") for item in INTERFACES] +
-    [Output("g-cpu", "extendData"),
-     Output("g-ram", "extendData"),
-     Output("ts-display", "children")],
+    [Output(id, "figure") for id in graph_ids] +
+    [Output("ts-display", "children")],
     [Input('tick', 'n_intervals')]
 )
 def update(n):
-    # Obtener datos
     with data.lock:
         vals = {k: v.copy() for k, v in data.values.items()}
         hw = data.hw.copy()
         ts = data.ts
         online = data.online
     
-    # Preparar actualizaciones
     outputs = []
     
-    # DOWN (▼) y UP (▲) para cada interfaz
+    # Actualizar cada gauge usando Patch
     for item in INTERFACES:
         v = vals.get(item['id'], {'down': 0, 'up': 0})
+        
         # DOWN
-        outputs.append([{'value': [[v['down']]]}])
+        patch_d = Patch()
+        patch_d['data'][0]['value'] = v['down']
+        outputs.append(patch_d)
+        
         # UP
-        outputs.append([{'value': [[v['up']]]}])
+        patch_u = Patch()
+        patch_u['data'][0]['value'] = v['up']
+        outputs.append(patch_u)
     
-    # CPU y RAM
-    outputs.append([{'value': [[hw['cpu']]]}])   # CPU
-    outputs.append([{'value': [[hw['ram']]]}])   # RAM
+    # CPU
+    patch_cpu = Patch()
+    patch_cpu['data'][0]['value'] = hw['cpu']
+    outputs.append(patch_cpu)
+    
+    # RAM
+    patch_ram = Patch()
+    patch_ram['data'][0]['value'] = hw['ram']
+    outputs.append(patch_ram)
     
     # Status
     dot = "●" if online else "○"
