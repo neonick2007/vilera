@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - VERSIÓN FINAL
+# BTS - Bandwidth Telemetry System - VERSIÓN FLUIDA
 
 import dash
 from dash import dcc, html, Patch
@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# CONFIGURACIÓN DE INTERFACES - LÍMITES REALISTAS
+# CONFIGURACIÓN DE INTERFACES
 # ============================================
 COLORS = [
     {'down': '#00d4ff', 'up': '#0088aa'},
@@ -43,7 +43,7 @@ INTERFACES = [
     {'id': 'clientes', 'display': 'Clientes', 'color': COLORS[2], 'limit': 20, 'mikrotik': 'ether2'},
     {'id': 'casa', 'display': 'Casa', 'color': COLORS[3], 'limit': 15, 'mikrotik': 'ether1'},
     {'id': 'andres', 'display': 'Andrés', 'color': COLORS[4], 'limit': 10, 'mikrotik': '<pppoe-andres.bodega>'},
-    {'id': 'isaura', 'display': 'Isaura', 'color': COLORS[5], 'limit': 10, 'mikrotik': '<pppoe-isaura.zambrano>'},
+    {'id': 'isaura', 'display': 'Isaura', 'color': COLORS[5], 'limit': 15, 'mikrotik': '<pppoe-isaura.zambrano>'},
     {'id': 'wifi', 'display': 'WiFi', 'color': COLORS[6], 'limit': 20, 'mikrotik': 'ether6'},
 ]
 
@@ -81,7 +81,6 @@ def fetch_data():
                 )
                 api = conn.get_api()
                 data.online = True
-                # Inicializar contadores
                 interfaces = api.get_resource('/interface').get()
                 for item in INTERFACES:
                     raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
@@ -104,7 +103,6 @@ def fetch_data():
                     rx = int(raw.get('rx-byte', 0))
                     tx = int(raw.get('tx-byte', 0))
                     
-                    # Calcular Mbps correctamente
                     if dt > 0 and data.prev_rx[item['id']] is not None:
                         d_mbps = round(((rx - data.prev_rx[item['id']]) * 8) / (dt * 1_000_000), 2)
                         u_mbps = round(((tx - data.prev_tx[item['id']]) * 8) / (dt * 1_000_000), 2)
@@ -112,7 +110,6 @@ def fetch_data():
                         d_mbps = 0
                         u_mbps = 0
                     
-                    # Evitar valores negativos o absurdos
                     if d_mbps < 0 or d_mbps > 10000: d_mbps = 0
                     if u_mbps < 0 or u_mbps > 10000: u_mbps = 0
                     
@@ -139,7 +136,7 @@ def fetch_data():
             conn = None
             time.sleep(5)
         
-        time.sleep(1)
+        time.sleep(0.5)  # ⬅️ MUESTREO MÁS RÁPIDO (500ms)
 
 threading.Thread(target=fetch_data, daemon=True).start()
 
@@ -182,7 +179,7 @@ def create_gauge(color, limit, display_name, is_hw=False):
         height=90,
         font={'family': 'Arial Black, sans-serif'},
         title={
-            'text': f'<b>{display_name}</b>',
+            'text': f'<b>{display_name}</b>',  # ⬅️ SOLO EL NOMBRE
             'font': {'color': color, 'size': 9, 'family': 'Arial Black, sans-serif'},
             'y': 0.88,
             'x': 0.5
@@ -321,7 +318,7 @@ app.layout = html.Div(
                 )
             ]
         ),
-        dcc.Interval(id='tick', interval=1000)
+        dcc.Interval(id='tick', interval=500)  # ⬅️ ACTUALIZACIÓN MÁS FLUIDA (500ms)
     ]
 )
 
