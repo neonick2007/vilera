@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - VERSIÓN ESTABLE
+# BTS - Bandwidth Telemetry System - VERSIÓN ORIGINAL (FUNCIONAL)
 
 import dash
 from dash import dcc, html
@@ -25,308 +25,320 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# INTERFACES - CON LÍMITES REALISTAS
+# CONFIGURACIÓN DE INTERFACES
 # ============================================
 COLORS = [
-    {'down': '#00d4ff', 'up': '#0088aa'},
-    {'down': '#00ff88', 'up': '#00aa55'},
-    {'down': '#ffaa00', 'up': '#cc7700'},
-    {'down': '#ff3366', 'up': '#cc0033'},
-    {'down': '#aa66ff', 'up': '#7733cc'},
-    {'down': '#ff66aa', 'up': '#cc3377'},
-    {'down': '#66ffcc', 'up': '#33cc99'},
+    {'down': '#00f3ff', 'up': '#008b91', 'fill': 'rgba(0,243,255,0.06)'},
+    {'down': '#70ff00', 'up': '#459900', 'fill': 'rgba(112,255,0,0.06)'},
+    {'down': '#ffb800', 'up': '#a37500', 'fill': 'rgba(255,184,0,0.06)'},
+    {'down': '#ff007a', 'up': '#a6004f', 'fill': 'rgba(255,0,122,0.06)'},
+    {'down': '#a855f7', 'up': '#7c3aed', 'fill': 'rgba(168,85,247,0.06)'},
+    {'down': '#f472b6', 'up': '#db2777', 'fill': 'rgba(244,114,182,0.06)'},
+    {'down': '#f59e0b', 'up': '#b45309', 'fill': 'rgba(245,158,11,0.06)'},
 ]
 
 INTERFACES = [
-    {'id': 'wan', 'display': 'WAN', 'color': COLORS[0], 'limit': 50, 'mikrotik': 'sfp1-WAN-FIBEX'},
-    {'id': 'bridge', 'display': 'Bridge', 'color': COLORS[1], 'limit': 30, 'mikrotik': 'bridge'},
-    {'id': 'clientes', 'display': 'Clientes', 'color': COLORS[2], 'limit': 20, 'mikrotik': 'ether2'},
-    {'id': 'casa', 'display': 'Casa', 'color': COLORS[3], 'limit': 15, 'mikrotik': 'ether1'},
-    {'id': 'andres', 'display': 'Andrés', 'color': COLORS[4], 'limit': 10, 'mikrotik': '<pppoe-andres.bodega>'},
-    {'id': 'isaura', 'display': 'Isaura', 'color': COLORS[5], 'limit': 15, 'mikrotik': '<pppoe-isaura.zambrano>'},
-    {'id': 'wifi', 'display': 'WiFi', 'color': COLORS[6], 'limit': 20, 'mikrotik': 'ether6'},
+    {
+        'id': 'sfp1-WAN-FIBEX',
+        'color': COLORS[0],
+        'limit': 50,
+        'display_name': '🌐 WAN',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
+    {
+        'id': 'bridge',
+        'color': COLORS[1],
+        'limit': 30,
+        'display_name': '🔗 Bridge',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
+    {
+        'id': 'ether2',
+        'color': COLORS[2],
+        'limit': 20,
+        'display_name': '🏢 Clientes',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
+    {
+        'id': 'ether1',
+        'color': COLORS[3],
+        'limit': 15,
+        'display_name': '🏠 Casa',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
+    {
+        'id': 'pppoe-andres-bodega',
+        'color': COLORS[4],
+        'limit': 10,
+        'display_name': '👤 Andrés',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
+    {
+        'id': 'pppoe-isaura-zambrano',
+        'color': COLORS[5],
+        'limit': 15,
+        'display_name': '👤 Isaura',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
+    {
+        'id': 'ether6',
+        'color': COLORS[6],
+        'limit': 20,
+        'display_name': '📶 WiFi',
+        'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
+        'vlans': []
+    },
 ]
 
 ALL_IDS = [i['id'] for i in INTERFACES]
+ALL_BOX_IDS = ALL_IDS + ['system-hw']
 
 # ============================================
-# DATOS
+# GESTOR DE DATOS
 # ============================================
-class DataStore:
+class BTSDataManager:
     def __init__(self):
         self.lock = threading.Lock()
-        self.values = {i['id']: {'down': 0, 'up': 0} for i in INTERFACES}
-        self.hw = {'cpu': 0, 'ram': 0}
-        self.ts = ""
-        self.online = False
-        self.prev_rx = {i['id']: 0 for i in INTERFACES}
-        self.prev_tx = {i['id']: 0 for i in INTERFACES}
-        self.last_time = time.time()
+        self.stats = {uid: {
+            'd_last': 0, 'u_last': 0, 'time': time.time(),
+            'x': [], 'yd': [], 'yu': []
+        } for uid in ALL_IDS}
+        self.hardware = {'cpu': 0, 'ram': 0}
+        self.last_ts = ""
+        self.connection_status = False
 
-data = DataStore()
+data_manager = BTSDataManager()
 
 # ============================================
-# OBTENER DATOS DEL MIKROTIK
+# MAPEO DE NOMBRES
 # ============================================
-def fetch_data():
-    conn = None
+NAME_MAP = {
+    'sfp1-WAN-FIBEX': 'sfp1-WAN-FIBEX',
+    'bridge': 'bridge',
+    'ether2': 'ether2',
+    'ether1': 'ether1',
+    '<pppoe-andres.bodega>': 'pppoe-andres-bodega',
+    '<pppoe-isaura.zambrano>': 'pppoe-isaura-zambrano',
+    'ether6': 'ether6'
+}
+
+# ============================================
+# FUNCIÓN DE OBTENCIÓN DE DATOS
+# ============================================
+def fetch_mikrotik_data():
+    connection = None
     while True:
         try:
-            if conn is None:
-                conn = routeros_api.RouterOsApiPool(
-                    MIKROTIK_HOST, username=MIKROTIK_USER,
-                    password=MIKROTIK_PASSWORD, port=MIKROTIK_PORT,
+            if connection is None:
+                logger.info(f"🔗 Conectando a {MIKROTIK_HOST}")
+                connection = routeros_api.RouterOsApiPool(
+                    MIKROTIK_HOST,
+                    username=MIKROTIK_USER,
+                    password=MIKROTIK_PASSWORD,
+                    port=MIKROTIK_PORT,
                     plaintext_login=True
                 )
-                api = conn.get_api()
-                data.online = True
+                api = connection.get_api()
+                data_manager.connection_status = True
+                logger.info("✅ Conectado")
 
-            interfaces = api.get_resource('/interface').get()
-            resource = api.get_resource('/system/resource').get()
+            raw_data = api.get_resource('/interface').get()
+            raw_resource = api.get_resource('/system/resource').get()
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            data_manager.last_ts = timestamp
 
-            now = time.time()
-            dt = now - data.last_time
-            data.last_time = now
+            for uid in ALL_IDS:
+                mikrotik_name = next((k for k, v in NAME_MAP.items() if v == uid), uid)
+                raw = next((item for item in raw_data if item.get('name') == mikrotik_name), {})
+                rx = int(raw.get('rx-byte', 0)) if raw else 0
+                tx = int(raw.get('tx-byte', 0)) if raw else 0
+                
+                now = time.time()
+                dt = now - data_manager.stats[uid]['time']
+                
+                if dt > 0:
+                    d_mbps = round((((rx - data_manager.stats[uid]['d_last']) * 8) / dt) / 1e6, 2) \
+                        if data_manager.stats[uid]['d_last'] > 0 else 0
+                    u_mbps = round((((tx - data_manager.stats[uid]['u_last']) * 8) / dt) / 1e6, 2) \
+                        if data_manager.stats[uid]['u_last'] > 0 else 0
+                else:
+                    d_mbps = u_mbps = 0
 
-            for item in INTERFACES:
-                raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
-                if raw:
-                    rx = int(raw.get('rx-byte', 0))
-                    tx = int(raw.get('tx-byte', 0))
-                    
-                    if dt > 0:
-                        d_mbps = round(((rx - data.prev_rx[item['id']]) * 8) / (dt * 1_000_000), 2)
-                        u_mbps = round(((tx - data.prev_tx[item['id']]) * 8) / (dt * 1_000_000), 2)
-                    else:
-                        d_mbps = 0
-                        u_mbps = 0
-                    
-                    if d_mbps < 0: d_mbps = 0
-                    if u_mbps < 0: u_mbps = 0
-                    
-                    data.prev_rx[item['id']] = rx
-                    data.prev_tx[item['id']] = tx
-                    
-                    data.values[item['id']] = {'down': d_mbps, 'up': u_mbps}
+                data_manager.stats[uid].update({'d_last': rx, 'u_last': tx, 'time': now})
+                data_manager.stats[uid]['x'].append(timestamp)
+                data_manager.stats[uid]['yd'].append(d_mbps)
+                data_manager.stats[uid]['yu'].append(u_mbps)
 
-            if resource:
-                r = resource[0]
-                total = float(r.get('total-memory', 1))
-                free = float(r.get('free-memory', 0))
-                data.hw = {
-                    'cpu': float(r.get('cpu-load', 0)),
-                    'ram': round(((total - free) / total) * 100, 1)
-                }
-            
-            data.ts = datetime.now().strftime("%H:%M:%S")
+                if len(data_manager.stats[uid]['x']) > 30:
+                    for key in ['x', 'yd', 'yu']:
+                        data_manager.stats[uid][key].pop(0)
+
+            if raw_resource:
+                res = raw_resource[0]
+                cpu_usage = float(res.get('cpu-load', 0))
+                total_mem = float(res.get('total-memory', 1))
+                free_mem = float(res.get('free-memory', 0))
+                ram_usage = round(((total_mem - free_mem) / total_mem) * 100, 1)
+                data_manager.hardware = {'cpu': cpu_usage, 'ram': ram_usage}
 
         except Exception as e:
             logger.error(f"Error: {e}")
-            data.online = False
-            conn = None
+            connection = None
+            data_manager.connection_status = False
             time.sleep(5)
         
-        time.sleep(0.5)  # ⬅️ 500ms = MUESTREO FLUIDO
-
-threading.Thread(target=fetch_data, daemon=True).start()
+        time.sleep(1)
 
 # ============================================
-# CREAR GAUGE
+# FUNCIÓN DE GAUGE
 # ============================================
-def make_gauge(val, color, title, limit, is_hw=False):
-    r_max = 100 if is_hw else limit
-    suffix = '%' if is_hw else 'M'
-    
-    pct = val / r_max if r_max > 0 else 0
+def make_gauge(val, color, title, limit=None, is_percentage=False):
+    if is_percentage:
+        display_val, unit, r_max = val, " %", 100
+    else:
+        if limit is None:
+            if val >= 1000:
+                display_val, unit, r_max = val / 1000, " Gb", 10
+            else:
+                display_val, unit, r_max = val, " Mb", 1000
+        else:
+            display_val, unit, r_max = val, " Mb", limit
+
+    pct = display_val / r_max if r_max > 0 else 0
     bar_color = '#ff2244' if pct > 0.9 else ('#ffb800' if pct > 0.7 else color)
 
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
-        value=val,
+        value=display_val,
         number={
             'valueformat': '.1f',
-            'suffix': suffix,
-            'font': {'size': 16, 'color': 'white', 'family': 'Arial Black, sans-serif'}
+            'suffix': unit,
+            'font': {'size': 18, 'color': 'white', 'family': 'Share Tech Mono'}
         },
         gauge={
-            'axis': {
-                'range': [0, r_max],
-                'tickfont': {'size': 8, 'color': '#666'},
-                'nticks': 3
-            },
-            'bar': {'color': bar_color, 'thickness': 0.4},
+            'axis': {'range': [0, r_max], 'tickfont': {'size': 7, 'color': '#444', 'family': 'Share Tech Mono'}, 'nticks': 5},
+            'bar': {'color': bar_color, 'thickness': 0.35},
             'bgcolor': 'rgba(255,255,255,0.02)',
+            'borderwidth': 0,
             'steps': [
-                {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.01)'},
-                {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.03)'},
-                {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.04)'},
+                {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.015)'},
+                {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.04)'},
+                {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.06)'},
             ],
-            'threshold': {'line': {'color': bar_color, 'width': 2}, 'thickness': 0.6, 'value': val}
+            'threshold': {'line': {'color': bar_color, 'width': 2}, 'thickness': 0.8, 'value': display_val}
         }
     ))
 
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=2, r=2, t=22, b=2),
-        height=90,
-        font={'family': 'Arial Black, sans-serif'},
+        autosize=True,
+        margin=dict(l=6, r=6, t=28, b=5),
+        font={'family': 'Share Tech Mono'},
         title={
             'text': f'<b>{title}</b>',
-            'font': {'color': color, 'size': 9, 'family': 'Arial Black, sans-serif'},
-            'y': 0.88,
-            'x': 0.5
+            'font': {'color': color, 'size': 9, 'family': 'Share Tech Mono'},
+            'y': 0.92, 'x': 0.5
         }
     )
     return fig
 
 # ============================================
-# DASH APP
+# APLICACIÓN DASH
 # ============================================
 app = dash.Dash(__name__)
 server = app.server
 
-app.index_string = '''
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BTS - Bandwidth Telemetry</title>
-    <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { background:#0a0e1a; overflow:hidden; font-family:'Arial Black',sans-serif; }
-        .wrap { display:flex; flex-direction:column; height:100vh; padding:4px 6px; gap:2px; }
-        .header { display:flex; justify-content:space-between; align-items:center; padding:2px 6px; border-bottom:1px solid rgba(0,212,255,0.06); flex-shrink:0; }
-        .header h1 { color:#00d4ff; font-size:13px; letter-spacing:2px; }
-        .header span { color:rgba(0,212,255,0.25); font-size:9px; margin-left:6px; }
-        .header-status { color:rgba(0,212,255,0.3); font-size:9px; }
-        .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:2px; flex:1; }
-        .card { background:rgba(6,10,18,0.85); border-radius:3px; border:1px solid rgba(0,212,255,0.04); padding:1px; display:flex; flex-direction:column; overflow:hidden; }
-        .row { display:flex; flex-direction:row; height:100%; gap:1px; }
-        .half { flex:1; min-width:0; }
-        .half .js-plotly-plot { height:100% !important; width:100% !important; }
-        .half .plot-container { height:100% !important; width:100% !important; }
-        .half svg { height:100% !important; width:100% !important; }
-        ::-webkit-scrollbar { display:none; }
-    </style>
-</head>
-<body>
-    {%app_entry%}
-    <footer>{%config%}{%scripts%}{%renderer%}</footer>
-</body>
-</html>
-'''
-
-# Layout
 app.layout = html.Div(
-    className='wrap',
+    style={
+        'backgroundColor': '#0a0e1a',
+        'padding': '20px',
+        'minHeight': '100vh',
+        'fontFamily': 'Share Tech Mono, monospace'
+    },
     children=[
-        html.Div(
-            className='header',
-            children=[
-                html.Div(children=[
-                    html.H1("📡 BANDWIDTH TELEMETRY"),
-                    html.Span("| 7 interfaces")
-                ]),
-                html.Div(id='ts-display', className='header-status')
-            ]
+        html.H1(
+            "📡 BANDWIDTH TELEMETRY",
+            style={
+                'textAlign': 'center',
+                'color': '#00f3ff',
+                'textShadow': '0 0 20px rgba(0,243,255,0.3)',
+                'letterSpacing': '4px',
+                'marginBottom': '5px'
+            }
+        ),
+        html.P(
+            "MikroTik Monitor • 7 Interfaces • Tiempo Real",
+            style={'textAlign': 'center', 'color': 'rgba(0,243,255,0.6)', 'marginBottom': '20px'}
         ),
         html.Div(
-            className='grid',
+            id='ts-display',
+            style={'textAlign': 'center', 'color': 'rgba(0,243,255,0.5)', 'marginBottom': '20px'}
+        ),
+        html.Div(
+            style={'display': 'grid', 'gridTemplateColumns': 'repeat(3, 1fr)', 'gap': '15px'},
             children=[html.Div(
-                className='card',
-                id=f"box-{item['id']}",
-                children=[
-                    html.Div(
-                        className='row',
-                        children=[
-                            html.Div(
-                                className='half',
-                                children=[dcc.Graph(
-                                    id=f"g-{item['id']}-d",
-                                    config={'displayModeBar': False, 'responsive': True}
-                                )]
-                            ),
-                            html.Div(
-                                className='half',
-                                children=[dcc.Graph(
-                                    id=f"g-{item['id']}-u",
-                                    config={'displayModeBar': False, 'responsive': True}
-                                )]
-                            )
-                        ]
-                    )
-                ]
-            ) for item in INTERFACES] + [
-                html.Div(
-                    className='card',
-                    id="box-sys",
-                    children=[
-                        html.Div(
-                            className='row',
-                            children=[
-                                html.Div(
-                                    className='half',
-                                    children=[dcc.Graph(
-                                        id="g-cpu",
-                                        config={'displayModeBar': False, 'responsive': True}
-                                    )]
-                                ),
-                                html.Div(
-                                    className='half',
-                                    children=[dcc.Graph(
-                                        id="g-ram",
-                                        config={'displayModeBar': False, 'responsive': True}
-                                    )]
-                                )
-                            ]
-                        )
-                    ]
-                )
-            ]
+                id=f"box-{uid}",
+                style={
+                    'background': 'rgba(6,10,18,0.95)',
+                    'borderRadius': '12px',
+                    'border': '1px solid rgba(0,243,255,0.1)',
+                    'padding': '10px'
+                }
+            ) for uid in ALL_BOX_IDS]
         ),
-        dcc.Interval(id='tick', interval=500)  # ⬅️ 500ms = FLUIDO
+        dcc.Interval(id='tick', interval=1000)
     ]
 )
 
 # ============================================
-# CALLBACK - ACTUALIZACIÓN
+# CALLBACKS
 # ============================================
 @app.callback(
-    [Output(f"g-{item['id']}-d", "figure") for item in INTERFACES] +
-    [Output(f"g-{item['id']}-u", "figure") for item in INTERFACES] +
-    [Output("g-cpu", "figure"),
-     Output("g-ram", "figure"),
-     Output("ts-display", "children")],
+    [Output(f"box-{uid}", "children") for uid in ALL_BOX_IDS] +
+    [Output("ts-display", "children")],
     [Input('tick', 'n_intervals')]
 )
-def update(n):
-    with data.lock:
-        vals = {k: v.copy() for k, v in data.values.items()}
-        hw = data.hw.copy()
-        ts = data.ts
-        online = data.online
+def update_ui(n):
+    card_contents = []
     
-    outputs = []
+    for box_id in ALL_BOX_IDS:
+        if box_id == 'system-hw':
+            hw_cpu = data_manager.hardware['cpu']
+            hw_ram = data_manager.hardware['ram']
+            card_contents.append(html.Div([
+                html.Div("🖥️ SISTEMA", style={'color': '#00f3ff', 'fontSize': '0.8em', 'textAlign': 'center', 'letterSpacing': '2px'}),
+                dcc.Graph(figure=make_gauge(hw_cpu, '#00f3ff', "CPU", is_percentage=True), config={'displayModeBar': False}),
+                dcc.Graph(figure=make_gauge(hw_ram, '#ff007a', "RAM", is_percentage=True), config={'displayModeBar': False})
+            ]))
+        else:
+            item = next((i for i in INTERFACES if i['id'] == box_id), None)
+            if item:
+                st = data_manager.stats[box_id]
+                d_mbps = st['yd'][-1] if st['yd'] else 0
+                u_mbps = st['yu'][-1] if st['yu'] else 0
+                color = item['color']['down']
+                card_contents.append(html.Div([
+                    html.Div(item['display_name'], style={'color': color, 'fontSize': '0.8em', 'textAlign': 'center', 'letterSpacing': '2px'}),
+                    dcc.Graph(figure=make_gauge(d_mbps, color, "DOWN", item['limit']), config={'displayModeBar': False}),
+                    dcc.Graph(figure=make_gauge(u_mbps, item['color']['up'], "UP", item['limit']), config={'displayModeBar': False})
+                ]))
     
-    for item in INTERFACES:
-        v = vals.get(item['id'], {'down': 0, 'up': 0})
-        outputs.append(make_gauge(v['down'], item['color']['down'], f"▼ {item['display']}", item['limit']))
-        outputs.append(make_gauge(v['up'], item['color']['up'], f"▲ {item['display']}", item['limit']))
-    
-    outputs.append(make_gauge(hw['cpu'], '#00d4ff', 'CPU', 100, is_hw=True))
-    outputs.append(make_gauge(hw['ram'], '#ff3366', 'RAM', 100, is_hw=True))
-    
-    dot = "●" if online else "○"
-    color = "#00ff88" if online else "#ff3366"
-    outputs.append(html.Span(f"{dot} {ts}", style={'color': color}))
-    
-    return outputs
+    status = "🟢" if data_manager.connection_status else "🔴"
+    ts = data_manager.last_ts or "Esperando datos..."
+    return card_contents + [f"{status} LIVE · {ts} · {len(ALL_IDS)} interfaces"]
 
 # ============================================
 # INICIO
 # ============================================
+threading.Thread(target=fetch_mikrotik_data, daemon=True).start()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8050))
     app.run(host='0.0.0.0', port=port, debug=False)
