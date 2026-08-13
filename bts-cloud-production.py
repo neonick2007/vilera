@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - VERSIÓN FLUIDA
+# BTS - Bandwidth Telemetry System - VERSIÓN ESTABLE
 
 import dash
-from dash import dcc, html, Patch
+from dash import dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import time
@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# CONFIGURACIÓN DE INTERFACES
+# INTERFACES - CON LÍMITES REALISTAS
 # ============================================
 COLORS = [
     {'down': '#00d4ff', 'up': '#0088aa'},
@@ -50,7 +50,7 @@ INTERFACES = [
 ALL_IDS = [i['id'] for i in INTERFACES]
 
 # ============================================
-# DATOS EN MEMORIA
+# DATOS
 # ============================================
 class DataStore:
     def __init__(self):
@@ -59,21 +59,20 @@ class DataStore:
         self.hw = {'cpu': 0, 'ram': 0}
         self.ts = ""
         self.online = False
-        self.prev_rx = {i['id']: None for i in INTERFACES}
-        self.prev_tx = {i['id']: None for i in INTERFACES}
-        self.prev_time = time.time()
+        self.prev_rx = {i['id']: 0 for i in INTERFACES}
+        self.prev_tx = {i['id']: 0 for i in INTERFACES}
+        self.last_time = time.time()
 
 data = DataStore()
 
 # ============================================
-# OBTENCIÓN DE DATOS
+# OBTENER DATOS DEL MIKROTIK
 # ============================================
 def fetch_data():
     conn = None
     while True:
         try:
             if conn is None:
-                logger.info(f"🔗 Conectando a {MIKROTIK_HOST}")
                 conn = routeros_api.RouterOsApiPool(
                     MIKROTIK_HOST, username=MIKROTIK_USER,
                     password=MIKROTIK_PASSWORD, port=MIKROTIK_PORT,
@@ -81,21 +80,13 @@ def fetch_data():
                 )
                 api = conn.get_api()
                 data.online = True
-                interfaces = api.get_resource('/interface').get()
-                for item in INTERFACES:
-                    raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
-                    if raw:
-                        data.prev_rx[item['id']] = int(raw.get('rx-byte', 0))
-                        data.prev_tx[item['id']] = int(raw.get('tx-byte', 0))
-                data.prev_time = time.time()
 
             interfaces = api.get_resource('/interface').get()
             resource = api.get_resource('/system/resource').get()
 
-            data.ts = datetime.now().strftime("%H:%M:%S")
             now = time.time()
-            dt = now - data.prev_time
-            data.prev_time = now
+            dt = now - data.last_time
+            data.last_time = now
 
             for item in INTERFACES:
                 raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
@@ -103,23 +94,20 @@ def fetch_data():
                     rx = int(raw.get('rx-byte', 0))
                     tx = int(raw.get('tx-byte', 0))
                     
-                    if dt > 0 and data.prev_rx[item['id']] is not None:
+                    if dt > 0:
                         d_mbps = round(((rx - data.prev_rx[item['id']]) * 8) / (dt * 1_000_000), 2)
                         u_mbps = round(((tx - data.prev_tx[item['id']]) * 8) / (dt * 1_000_000), 2)
                     else:
                         d_mbps = 0
                         u_mbps = 0
                     
-                    if d_mbps < 0 or d_mbps > 10000: d_mbps = 0
-                    if u_mbps < 0 or u_mbps > 10000: u_mbps = 0
+                    if d_mbps < 0: d_mbps = 0
+                    if u_mbps < 0: u_mbps = 0
                     
                     data.prev_rx[item['id']] = rx
                     data.prev_tx[item['id']] = tx
                     
-                    data.values[item['id']] = {
-                        'down': d_mbps,
-                        'up': u_mbps
-                    }
+                    data.values[item['id']] = {'down': d_mbps, 'up': u_mbps}
 
             if resource:
                 r = resource[0]
@@ -129,6 +117,8 @@ def fetch_data():
                     'cpu': float(r.get('cpu-load', 0)),
                     'ram': round(((total - free) / total) * 100, 1)
                 }
+            
+            data.ts = datetime.now().strftime("%H:%M:%S")
 
         except Exception as e:
             logger.error(f"Error: {e}")
@@ -136,20 +126,23 @@ def fetch_data():
             conn = None
             time.sleep(5)
         
-        time.sleep(0.5)  # ⬅️ MUESTREO MÁS RÁPIDO (500ms)
+        time.sleep(0.5)  # ⬅️ 500ms = MUESTREO FLUIDO
 
 threading.Thread(target=fetch_data, daemon=True).start()
 
 # ============================================
 # CREAR GAUGE
 # ============================================
-def create_gauge(color, limit, display_name, is_hw=False):
+def make_gauge(val, color, title, limit, is_hw=False):
     r_max = 100 if is_hw else limit
     suffix = '%' if is_hw else 'M'
     
+    pct = val / r_max if r_max > 0 else 0
+    bar_color = '#ff2244' if pct > 0.9 else ('#ffb800' if pct > 0.7 else color)
+
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
-        value=0,
+        value=val,
         number={
             'valueformat': '.1f',
             'suffix': suffix,
@@ -161,14 +154,14 @@ def create_gauge(color, limit, display_name, is_hw=False):
                 'tickfont': {'size': 8, 'color': '#666'},
                 'nticks': 3
             },
-            'bar': {'color': color, 'thickness': 0.4},
+            'bar': {'color': bar_color, 'thickness': 0.4},
             'bgcolor': 'rgba(255,255,255,0.02)',
             'steps': [
                 {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.01)'},
                 {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.03)'},
                 {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.04)'},
             ],
-            'threshold': {'line': {'color': color, 'width': 2}, 'thickness': 0.6, 'value': 0}
+            'threshold': {'line': {'color': bar_color, 'width': 2}, 'thickness': 0.6, 'value': val}
         }
     ))
 
@@ -179,13 +172,12 @@ def create_gauge(color, limit, display_name, is_hw=False):
         height=90,
         font={'family': 'Arial Black, sans-serif'},
         title={
-            'text': f'<b>{display_name}</b>',  # ⬅️ SOLO EL NOMBRE
+            'text': f'<b>{title}</b>',
             'font': {'color': color, 'size': 9, 'family': 'Arial Black, sans-serif'},
             'y': 0.88,
             'x': 0.5
         }
     )
-    
     return fig
 
 # ============================================
@@ -226,27 +218,7 @@ app.index_string = '''
 </html>
 '''
 
-# ============================================
-# CREAR GAUGES INICIALES
-# ============================================
-initial_figs = {}
-graph_ids = []
-
-for item in INTERFACES:
-    did = f"g-{item['id']}-d"
-    uid = f"g-{item['id']}-u"
-    graph_ids.extend([did, uid])
-    initial_figs[did] = create_gauge(item['color']['down'], item['limit'], f"▼ {item['display']}")
-    initial_figs[uid] = create_gauge(item['color']['up'], item['limit'], f"▲ {item['display']}")
-
-# Hardware
-graph_ids.extend(['g-cpu', 'g-ram'])
-initial_figs['g-cpu'] = create_gauge('#00d4ff', 100, 'CPU', is_hw=True)
-initial_figs['g-ram'] = create_gauge('#ff3366', 100, 'RAM', is_hw=True)
-
-# ============================================
-# LAYOUT
-# ============================================
+# Layout
 app.layout = html.Div(
     className='wrap',
     children=[
@@ -273,7 +245,6 @@ app.layout = html.Div(
                                 className='half',
                                 children=[dcc.Graph(
                                     id=f"g-{item['id']}-d",
-                                    figure=initial_figs[f"g-{item['id']}-d"],
                                     config={'displayModeBar': False, 'responsive': True}
                                 )]
                             ),
@@ -281,7 +252,6 @@ app.layout = html.Div(
                                 className='half',
                                 children=[dcc.Graph(
                                     id=f"g-{item['id']}-u",
-                                    figure=initial_figs[f"g-{item['id']}-u"],
                                     config={'displayModeBar': False, 'responsive': True}
                                 )]
                             )
@@ -300,7 +270,6 @@ app.layout = html.Div(
                                     className='half',
                                     children=[dcc.Graph(
                                         id="g-cpu",
-                                        figure=initial_figs['g-cpu'],
                                         config={'displayModeBar': False, 'responsive': True}
                                     )]
                                 ),
@@ -308,7 +277,6 @@ app.layout = html.Div(
                                     className='half',
                                     children=[dcc.Graph(
                                         id="g-ram",
-                                        figure=initial_figs['g-ram'],
                                         config={'displayModeBar': False, 'responsive': True}
                                     )]
                                 )
@@ -318,16 +286,19 @@ app.layout = html.Div(
                 )
             ]
         ),
-        dcc.Interval(id='tick', interval=500)  # ⬅️ ACTUALIZACIÓN MÁS FLUIDA (500ms)
+        dcc.Interval(id='tick', interval=500)  # ⬅️ 500ms = FLUIDO
     ]
 )
 
 # ============================================
-# CALLBACK
+# CALLBACK - ACTUALIZACIÓN
 # ============================================
 @app.callback(
-    [Output(id, "figure") for id in graph_ids] +
-    [Output("ts-display", "children")],
+    [Output(f"g-{item['id']}-d", "figure") for item in INTERFACES] +
+    [Output(f"g-{item['id']}-u", "figure") for item in INTERFACES] +
+    [Output("g-cpu", "figure"),
+     Output("g-ram", "figure"),
+     Output("ts-display", "children")],
     [Input('tick', 'n_intervals')]
 )
 def update(n):
@@ -341,22 +312,11 @@ def update(n):
     
     for item in INTERFACES:
         v = vals.get(item['id'], {'down': 0, 'up': 0})
-        
-        patch_d = Patch()
-        patch_d['data'][0]['value'] = v['down']
-        outputs.append(patch_d)
-        
-        patch_u = Patch()
-        patch_u['data'][0]['value'] = v['up']
-        outputs.append(patch_u)
+        outputs.append(make_gauge(v['down'], item['color']['down'], f"▼ {item['display']}", item['limit']))
+        outputs.append(make_gauge(v['up'], item['color']['up'], f"▲ {item['display']}", item['limit']))
     
-    patch_cpu = Patch()
-    patch_cpu['data'][0]['value'] = hw['cpu']
-    outputs.append(patch_cpu)
-    
-    patch_ram = Patch()
-    patch_ram['data'][0]['value'] = hw['ram']
-    outputs.append(patch_ram)
+    outputs.append(make_gauge(hw['cpu'], '#00d4ff', 'CPU', 100, is_hw=True))
+    outputs.append(make_gauge(hw['ram'], '#ff3366', 'RAM', 100, is_hw=True))
     
     dot = "●" if online else "○"
     color = "#00ff88" if online else "#ff3366"
