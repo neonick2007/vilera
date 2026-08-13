@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - CONVERSIÓN CORREGIDA
+# BTS - Bandwidth Telemetry System - VERSIÓN FINAL
 
 import dash
 from dash import dcc, html, Patch
@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# CONFIGURACIÓN DE INTERFACES
+# CONFIGURACIÓN DE INTERFACES - LÍMITES REALISTAS
 # ============================================
 COLORS = [
     {'down': '#00d4ff', 'up': '#0088aa'},
@@ -38,13 +38,13 @@ COLORS = [
 ]
 
 INTERFACES = [
-    {'id': 'wan', 'display': 'WAN', 'color': COLORS[0], 'limit': 20, 'mikrotik': 'sfp1-WAN-FIBEX'},
-    {'id': 'bridge', 'display': 'Bridge', 'color': COLORS[1], 'limit': 10, 'mikrotik': 'bridge'},
-    {'id': 'clientes', 'display': 'Clientes', 'color': COLORS[2], 'limit': 10, 'mikrotik': 'ether2'},
+    {'id': 'wan', 'display': 'WAN', 'color': COLORS[0], 'limit': 50, 'mikrotik': 'sfp1-WAN-FIBEX'},
+    {'id': 'bridge', 'display': 'Bridge', 'color': COLORS[1], 'limit': 30, 'mikrotik': 'bridge'},
+    {'id': 'clientes', 'display': 'Clientes', 'color': COLORS[2], 'limit': 20, 'mikrotik': 'ether2'},
     {'id': 'casa', 'display': 'Casa', 'color': COLORS[3], 'limit': 15, 'mikrotik': 'ether1'},
     {'id': 'andres', 'display': 'Andrés', 'color': COLORS[4], 'limit': 10, 'mikrotik': '<pppoe-andres.bodega>'},
-    {'id': 'isaura', 'display': 'Isaura', 'color': COLORS[5], 'limit': 15, 'mikrotik': '<pppoe-isaura.zambrano>'},
-    {'id': 'wifi', 'display': 'WiFi', 'color': COLORS[6], 'limit': 10, 'mikrotik': 'ether6'},
+    {'id': 'isaura', 'display': 'Isaura', 'color': COLORS[5], 'limit': 10, 'mikrotik': '<pppoe-isaura.zambrano>'},
+    {'id': 'wifi', 'display': 'WiFi', 'color': COLORS[6], 'limit': 20, 'mikrotik': 'ether6'},
 ]
 
 ALL_IDS = [i['id'] for i in INTERFACES]
@@ -59,20 +59,21 @@ class DataStore:
         self.hw = {'cpu': 0, 'ram': 0}
         self.ts = ""
         self.online = False
-        self.prev_rx = {i['id']: 0 for i in INTERFACES}
-        self.prev_tx = {i['id']: 0 for i in INTERFACES}
-        self.last_time = time.time()
+        self.prev_rx = {i['id']: None for i in INTERFACES}
+        self.prev_tx = {i['id']: None for i in INTERFACES}
+        self.prev_time = time.time()
 
 data = DataStore()
 
 # ============================================
-# OBTENCIÓN DE DATOS CON CONVERSIÓN CORRECTA
+# OBTENCIÓN DE DATOS
 # ============================================
 def fetch_data():
     conn = None
     while True:
         try:
             if conn is None:
+                logger.info(f"🔗 Conectando a {MIKROTIK_HOST}")
                 conn = routeros_api.RouterOsApiPool(
                     MIKROTIK_HOST, username=MIKROTIK_USER,
                     password=MIKROTIK_PASSWORD, port=MIKROTIK_PORT,
@@ -80,14 +81,22 @@ def fetch_data():
                 )
                 api = conn.get_api()
                 data.online = True
+                # Inicializar contadores
+                interfaces = api.get_resource('/interface').get()
+                for item in INTERFACES:
+                    raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
+                    if raw:
+                        data.prev_rx[item['id']] = int(raw.get('rx-byte', 0))
+                        data.prev_tx[item['id']] = int(raw.get('tx-byte', 0))
+                data.prev_time = time.time()
 
             interfaces = api.get_resource('/interface').get()
             resource = api.get_resource('/system/resource').get()
 
             data.ts = datetime.now().strftime("%H:%M:%S")
             now = time.time()
-            dt = now - data.last_time
-            data.last_time = now
+            dt = now - data.prev_time
+            data.prev_time = now
 
             for item in INTERFACES:
                 raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
@@ -96,17 +105,16 @@ def fetch_data():
                     tx = int(raw.get('tx-byte', 0))
                     
                     # Calcular Mbps correctamente
-                    if dt > 0:
-                        # Mbps = (bytes * 8) / (1000 * 1000) / segundos
-                        d_mbps = round(((rx - data.prev_rx[item['id']]) * 8) / (dt * 1000 * 1000), 2)
-                        u_mbps = round(((tx - data.prev_tx[item['id']]) * 8) / (dt * 1000 * 1000), 2)
+                    if dt > 0 and data.prev_rx[item['id']] is not None:
+                        d_mbps = round(((rx - data.prev_rx[item['id']]) * 8) / (dt * 1_000_000), 2)
+                        u_mbps = round(((tx - data.prev_tx[item['id']]) * 8) / (dt * 1_000_000), 2)
                     else:
                         d_mbps = 0
                         u_mbps = 0
                     
-                    # Evitar valores negativos (reinicio de contador)
-                    if d_mbps < 0: d_mbps = 0
-                    if u_mbps < 0: u_mbps = 0
+                    # Evitar valores negativos o absurdos
+                    if d_mbps < 0 or d_mbps > 10000: d_mbps = 0
+                    if u_mbps < 0 or u_mbps > 10000: u_mbps = 0
                     
                     data.prev_rx[item['id']] = rx
                     data.prev_tx[item['id']] = tx
@@ -140,17 +148,14 @@ threading.Thread(target=fetch_data, daemon=True).start()
 # ============================================
 def create_gauge(color, limit, display_name, is_hw=False):
     r_max = 100 if is_hw else limit
-    
-    # Si el límite es muy bajo, ajustarlo para mejor visualización
-    if not is_hw and limit < 1:
-        r_max = 1
+    suffix = '%' if is_hw else 'M'
     
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=0,
         number={
             'valueformat': '.1f',
-            'suffix': '%' if is_hw else 'M',
+            'suffix': suffix,
             'font': {'size': 16, 'color': 'white', 'family': 'Arial Black, sans-serif'}
         },
         gauge={
@@ -230,7 +235,6 @@ app.index_string = '''
 initial_figs = {}
 graph_ids = []
 
-# Ajustar límites para mejor visualización
 for item in INTERFACES:
     did = f"g-{item['id']}-d"
     uid = f"g-{item['id']}-u"
@@ -322,7 +326,7 @@ app.layout = html.Div(
 )
 
 # ============================================
-# CALLBACK - ACTUALIZACIÓN CON PATCH
+# CALLBACK
 # ============================================
 @app.callback(
     [Output(id, "figure") for id in graph_ids] +
@@ -338,31 +342,25 @@ def update(n):
     
     outputs = []
     
-    # Actualizar cada gauge usando Patch
     for item in INTERFACES:
         v = vals.get(item['id'], {'down': 0, 'up': 0})
         
-        # DOWN
         patch_d = Patch()
         patch_d['data'][0]['value'] = v['down']
         outputs.append(patch_d)
         
-        # UP
         patch_u = Patch()
         patch_u['data'][0]['value'] = v['up']
         outputs.append(patch_u)
     
-    # CPU
     patch_cpu = Patch()
     patch_cpu['data'][0]['value'] = hw['cpu']
     outputs.append(patch_cpu)
     
-    # RAM
     patch_ram = Patch()
     patch_ram['data'][0]['value'] = hw['ram']
     outputs.append(patch_ram)
     
-    # Status
     dot = "●" if online else "○"
     color = "#00ff88" if online else "#ff3366"
     outputs.append(html.Span(f"{dot} {ts}", style={'color': color}))
