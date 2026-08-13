@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
-# BTS - Bandwidth Telemetry System - SIN PARPADEO CON PATCH
+# BTS - Bandwidth Telemetry System - CONVERSIÓN CORREGIDA
 
 import dash
 from dash import dcc, html, Patch
@@ -59,11 +59,14 @@ class DataStore:
         self.hw = {'cpu': 0, 'ram': 0}
         self.ts = ""
         self.online = False
+        self.prev_rx = {i['id']: 0 for i in INTERFACES}
+        self.prev_tx = {i['id']: 0 for i in INTERFACES}
+        self.last_time = time.time()
 
 data = DataStore()
 
 # ============================================
-# OBTENCIÓN DE DATOS
+# OBTENCIÓN DE DATOS CON CONVERSIÓN CORRECTA
 # ============================================
 def fetch_data():
     conn = None
@@ -82,6 +85,9 @@ def fetch_data():
             resource = api.get_resource('/system/resource').get()
 
             data.ts = datetime.now().strftime("%H:%M:%S")
+            now = time.time()
+            dt = now - data.last_time
+            data.last_time = now
 
             for item in INTERFACES:
                 raw = next((i for i in interfaces if i.get('name') == item['mikrotik']), {})
@@ -89,10 +95,25 @@ def fetch_data():
                     rx = int(raw.get('rx-byte', 0))
                     tx = int(raw.get('tx-byte', 0))
                     
-                    # Calcular Mbps (simplificado)
+                    # Calcular Mbps correctamente
+                    if dt > 0:
+                        # Mbps = (bytes * 8) / (1000 * 1000) / segundos
+                        d_mbps = round(((rx - data.prev_rx[item['id']]) * 8) / (dt * 1000 * 1000), 2)
+                        u_mbps = round(((tx - data.prev_tx[item['id']]) * 8) / (dt * 1000 * 1000), 2)
+                    else:
+                        d_mbps = 0
+                        u_mbps = 0
+                    
+                    # Evitar valores negativos (reinicio de contador)
+                    if d_mbps < 0: d_mbps = 0
+                    if u_mbps < 0: u_mbps = 0
+                    
+                    data.prev_rx[item['id']] = rx
+                    data.prev_tx[item['id']] = tx
+                    
                     data.values[item['id']] = {
-                        'down': round(rx / 125000, 2),
-                        'up': round(tx / 125000, 2)
+                        'down': d_mbps,
+                        'up': u_mbps
                     }
 
             if resource:
@@ -119,6 +140,10 @@ threading.Thread(target=fetch_data, daemon=True).start()
 # ============================================
 def create_gauge(color, limit, display_name, is_hw=False):
     r_max = 100 if is_hw else limit
+    
+    # Si el límite es muy bajo, ajustarlo para mejor visualización
+    if not is_hw and limit < 1:
+        r_max = 1
     
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -205,6 +230,7 @@ app.index_string = '''
 initial_figs = {}
 graph_ids = []
 
+# Ajustar límites para mejor visualización
 for item in INTERFACES:
     did = f"g-{item['id']}-d"
     uid = f"g-{item['id']}-u"
