@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # bts-cloud-production.py
 # BTS - Bandwidth Telemetry System - Cloud Edition
+# Versión con diseño optimizado para pantalla
 
 import dash
 from dash import dcc, html
@@ -44,17 +45,17 @@ INTERFACES = [
     {
         'id': 'sfp1-WAN-FIBEX',
         'color': COLORS[0],
-        'limit': 1000,
-        'display_name': '🌐 WAN FIBEX',
+        'limit': 100,  # ⬇️ Reducido para mejor visualización
+        'display_name': '🌐 WAN',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
-        'mikrotik_name': 'sfp1-WAN-FIBEX'  # Nombre exacto en MikroTik
+        'mikrotik_name': 'sfp1-WAN-FIBEX'
     },
     {
         'id': 'bridge',
         'color': COLORS[1],
-        'limit': 950,
-        'display_name': '🔗 Bridge LAN',
+        'limit': 50,   # ⬇️ Reducido
+        'display_name': '🔗 Bridge',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
         'mikrotik_name': 'bridge'
@@ -62,8 +63,8 @@ INTERFACES = [
     {
         'id': 'ether2',
         'color': COLORS[2],
-        'limit': 500,
-        'display_name': '🏢 Taller Clientes',
+        'limit': 50,   # ⬇️ Reducido
+        'display_name': '🏢 Clientes',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
         'mikrotik_name': 'ether2'
@@ -71,8 +72,8 @@ INTERFACES = [
     {
         'id': 'ether1',
         'color': COLORS[3],
-        'limit': 100,
-        'display_name': '🏠 Casa 11',
+        'limit': 20,   # ⬇️ Reducido
+        'display_name': '🏠 Casa',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
         'mikrotik_name': 'ether1'
@@ -80,26 +81,26 @@ INTERFACES = [
     {
         'id': 'pppoe-andres-bodega',
         'color': COLORS[4],
-        'limit': 100,
-        'display_name': '👤 Andrés Bodega',
+        'limit': 20,   # ⬇️ Reducido
+        'display_name': '👤 Andrés',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
-        'mikrotik_name': '<pppoe-andres.bodega>'  # ✅ Nombre exacto con <>
+        'mikrotik_name': '<pppoe-andres.bodega>'
     },
     {
         'id': 'pppoe-isaura-zambrano',
         'color': COLORS[5],
-        'limit': 100,
-        'display_name': '👤 Isaura Zambrano',
+        'limit': 20,   # ⬇️ Reducido
+        'display_name': '👤 Isaura',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
-        'mikrotik_name': '<pppoe-isaura.zambrano>'  # ✅ Nombre exacto con <>
+        'mikrotik_name': '<pppoe-isaura.zambrano>'
     },
     {
         'id': 'ether6',
         'color': COLORS[6],
-        'limit': 200,
-        'display_name': '📶 WiFi Daniel',
+        'limit': 30,   # ⬇️ Reducido
+        'display_name': '📶 WiFi',
         'alertas': {'saturacion': True, 'caida_down': True, 'caida_up': False},
         'vlans': [],
         'mikrotik_name': 'ether6'
@@ -150,31 +151,20 @@ def fetch_mikrotik_data():
                 consecutive_failures = 0
                 logger.info("✅ Conectado al MikroTik")
 
-            # Obtener todas las interfaces
             raw_data = api.get_resource('/interface').get()
-            
-            # Debug: imprimir nombres de interfaces encontradas
-            if consecutive_failures == 0:
-                names = [item.get('name', '') for item in raw_data]
-                logger.info(f"📋 Interfaces en MikroTik: {names}")
-
-            # Obtener recursos del sistema
             raw_resource = api.get_resource('/system/resource').get()
             timestamp = datetime.now().strftime("%H:%M:%S")
             data_manager.last_ts = timestamp
 
-            # Procesar cada interfaz del dashboard
             for item in INTERFACES:
                 uid = item['id']
                 mikrotik_name = item['mikrotik_name']
                 
-                # Buscar la interfaz en los datos del MikroTik
                 raw = next((i for i in raw_data if i.get('name') == mikrotik_name), {})
                 
                 if raw:
                     rx = int(raw.get('rx-byte', 0))
                     tx = int(raw.get('tx-byte', 0))
-                    running = raw.get('running', False)
                     
                     now = time.time()
                     dt = now - data_manager.stats[uid]['time']
@@ -192,7 +182,6 @@ def fetch_mikrotik_data():
                         'time': now
                     })
                     
-                    # Guardar histórico (últimos 30 puntos)
                     data_manager.stats[uid]['x'].append(timestamp)
                     data_manager.stats[uid]['yd'].append(d_mbps)
                     data_manager.stats[uid]['yu'].append(u_mbps)
@@ -200,16 +189,7 @@ def fetch_mikrotik_data():
                     if len(data_manager.stats[uid]['x']) > 30:
                         for key in ['x', 'yd', 'yu']:
                             data_manager.stats[uid][key].pop(0)
-                    
-                    # Log para debugging (solo si hay tráfico)
-                    if d_mbps > 1 or u_mbps > 1:
-                        logger.info(f"📊 {uid}: DOWN={d_mbps:.2f} Mbps, UP={u_mbps:.2f} Mbps")
-                else:
-                    # La interfaz no existe en el MikroTik
-                    if consecutive_failures == 0:
-                        logger.warning(f"⚠️ Interfaz '{mikrotik_name}' no encontrada en MikroTik")
 
-            # Procesar hardware
             if raw_resource:
                 res = raw_resource[0]
                 cpu_usage = float(res.get('cpu-load', 0))
@@ -217,8 +197,6 @@ def fetch_mikrotik_data():
                 free_mem = float(res.get('free-memory', 0))
                 ram_usage = round(((total_mem - free_mem) / total_mem) * 100, 1)
                 data_manager.hardware = {'cpu': cpu_usage, 'ram': ram_usage}
-                
-                logger.info(f"🖥️ CPU: {cpu_usage:.1f}%, RAM: {ram_usage:.1f}%")
 
             consecutive_failures = 0
 
@@ -228,28 +206,24 @@ def fetch_mikrotik_data():
             data_manager.last_error = str(e)
             logger.error(f"❌ Error ({consecutive_failures}): {e}")
             connection = None
-            
-            # Esperar antes de reintentar
-            wait_time = min(30, consecutive_failures * 2)
-            time.sleep(wait_time)
+            time.sleep(min(30, consecutive_failures * 2))
         
-        # Pequeña pausa entre ciclos
         time.sleep(2)
 
 # ============================================
-# FUNCIÓN DE GAUGE
+# FUNCIÓN DE GAUGE - VERSIÓN COMPACTA
 # ============================================
 def make_gauge(val, color, title, limit=None, is_percentage=False):
     if is_percentage:
-        display_val, unit, r_max = val, " %", 100
+        display_val, unit, r_max = val, "%", 100
     else:
         if limit is None:
             if val >= 1000:
-                display_val, unit, r_max = val / 1000, " Gb", 10
+                display_val, unit, r_max = val / 1000, "G", 10
             else:
-                display_val, unit, r_max = val, " Mb", 1000
+                display_val, unit, r_max = val, "M", 1000
         else:
-            display_val, unit, r_max = val, " Mb", limit
+            display_val, unit, r_max = val, "M", limit
 
     pct = display_val / r_max if r_max > 0 else 0
     bar_color = '#ff2244' if pct > 0.9 else ('#ffb800' if pct > 0.7 else color)
@@ -260,19 +234,24 @@ def make_gauge(val, color, title, limit=None, is_percentage=False):
         number={
             'valueformat': '.1f',
             'suffix': unit,
-            'font': {'size': 18, 'color': 'white', 'family': 'Share Tech Mono'}
+            'font': {'size': 14, 'color': 'white', 'family': 'Share Tech Mono'}
         },
         gauge={
-            'axis': {'range': [0, r_max], 'tickfont': {'size': 7, 'color': '#444'}, 'nticks': 5},
-            'bar': {'color': bar_color, 'thickness': 0.35},
+            'axis': {
+                'range': [0, r_max],
+                'tickfont': {'size': 6, 'color': '#666'},
+                'tickcolor': '#333',
+                'nticks': 3
+            },
+            'bar': {'color': bar_color, 'thickness': 0.25},
             'bgcolor': 'rgba(255,255,255,0.02)',
             'borderwidth': 0,
             'steps': [
-                {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.015)'},
-                {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.04)'},
-                {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.06)'},
+                {'range': [0, r_max * 0.7], 'color': 'rgba(255,255,255,0.01)'},
+                {'range': [r_max * 0.7, r_max * 0.9], 'color': 'rgba(255,184,0,0.03)'},
+                {'range': [r_max * 0.9, r_max], 'color': 'rgba(255,34,68,0.05)'},
             ],
-            'threshold': {'line': {'color': bar_color, 'width': 2}, 'thickness': 0.8, 'value': display_val}
+            'threshold': {'line': {'color': bar_color, 'width': 1.5}, 'thickness': 0.6, 'value': display_val}
         }
     ))
 
@@ -280,18 +259,20 @@ def make_gauge(val, color, title, limit=None, is_percentage=False):
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         autosize=True,
-        margin=dict(l=6, r=6, t=28, b=5),
+        margin=dict(l=4, r=4, t=20, b=4),
         font={'family': 'Share Tech Mono'},
+        height=110,
         title={
             'text': f'<b>{title}</b>',
-            'font': {'color': color, 'size': 9},
-            'y': 0.92, 'x': 0.5
+            'font': {'color': color, 'size': 8, 'family': 'Share Tech Mono'},
+            'y': 0.88,
+            'x': 0.5
         }
     )
     return fig
 
 # ============================================
-# APLICACIÓN DASH
+# APLICACIÓN DASH - VERSIÓN COMPACTA
 # ============================================
 app = dash.Dash(__name__)
 server = app.server
@@ -299,41 +280,67 @@ server = app.server
 app.layout = html.Div(
     style={
         'backgroundColor': '#0a0e1a',
-        'padding': '20px',
+        'padding': '8px',
         'minHeight': '100vh',
-        'fontFamily': 'Share Tech Mono, monospace'
+        'fontFamily': 'Share Tech Mono, monospace',
+        'display': 'flex',
+        'flexDirection': 'column',
+        'gap': '4px'
     },
     children=[
-        html.H1(
-            "📡 BANDWIDTH TELEMETRY",
+        # Header compacto
+        html.Div(
             style={
-                'textAlign': 'center',
-                'color': '#00f3ff',
-                'textShadow': '0 0 20px rgba(0,243,255,0.3)',
-                'letterSpacing': '4px',
-                'marginBottom': '5px'
-            }
+                'display': 'flex',
+                'justifyContent': 'space-between',
+                'alignItems': 'center',
+                'padding': '4px 12px',
+                'borderBottom': '1px solid rgba(0,243,255,0.08)',
+                'flexShrink': 0
+            },
+            children=[
+                html.Div(
+                    style={'display': 'flex', 'alignItems': 'center', 'gap': '10px'},
+                    children=[
+                        html.Span("📡", style={'fontSize': '20px'}),
+                        html.Span(
+                            "BANDWIDTH TELEMETRY",
+                            style={'color': '#00f3ff', 'fontSize': '14px', 'letterSpacing': '3px', 'fontWeight': 'bold'}
+                        ),
+                        html.Span(
+                            "| 7 interfaces",
+                            style={'color': 'rgba(0,243,255,0.4)', 'fontSize': '10px'}
+                        )
+                    ]
+                ),
+                html.Div(
+                    id='ts-display',
+                    style={'color': 'rgba(0,243,255,0.5)', 'fontSize': '10px'}
+                )
+            ]
         ),
-        html.P(
-            "MikroTik Monitor • 7 Interfaces • Tiempo Real",
-            style={'textAlign': 'center', 'color': 'rgba(0,243,255,0.6)', 'marginBottom': '20px'}
-        ),
+        
+        # Grid de gauges - 4 columnas para mejor distribución
         html.Div(
-            id='ts-display',
-            style={'textAlign': 'center', 'color': 'rgba(0,243,255,0.5)', 'marginBottom': '20px'}
-        ),
-        html.Div(
-            style={'display': 'grid', 'gridTemplateColumns': 'repeat(3, 1fr)', 'gap': '15px'},
+            style={
+                'display': 'grid',
+                'gridTemplateColumns': 'repeat(4, 1fr)',
+                'gap': '4px',
+                'flex': '1'
+            },
             children=[html.Div(
                 id=f"box-{uid}",
                 style={
-                    'background': 'rgba(6,10,18,0.95)',
-                    'borderRadius': '12px',
-                    'border': '1px solid rgba(0,243,255,0.1)',
-                    'padding': '10px'
+                    'background': 'rgba(6,10,18,0.9)',
+                    'borderRadius': '6px',
+                    'border': '1px solid rgba(0,243,255,0.06)',
+                    'padding': '2px',
+                    'display': 'flex',
+                    'flexDirection': 'column'
                 }
             ) for uid in ALL_BOX_IDS]
         ),
+        
         dcc.Interval(id='tick', interval=2000)
     ]
 )
@@ -353,11 +360,31 @@ def update_ui(n):
         if box_id == 'system-hw':
             hw_cpu = data_manager.hardware['cpu']
             hw_ram = data_manager.hardware['ram']
-            card_contents.append(html.Div([
-                html.Div("🖥️ SISTEMA", style={'color': '#00f3ff', 'fontSize': '0.8em', 'textAlign': 'center', 'letterSpacing': '2px'}),
-                dcc.Graph(figure=make_gauge(hw_cpu, '#00f3ff', "CPU", is_percentage=True), config={'displayModeBar': False}),
-                dcc.Graph(figure=make_gauge(hw_ram, '#ff007a', "RAM", is_percentage=True), config={'displayModeBar': False})
-            ]))
+            card_contents.append(html.Div(
+                style={'display': 'flex', 'flexDirection': 'row', 'height': '100%'},
+                children=[
+                    html.Div(
+                        style={'flex': '1', 'padding': '2px'},
+                        children=[
+                            dcc.Graph(
+                                figure=make_gauge(hw_cpu, '#00f3ff', "CPU", is_percentage=True),
+                                config={'displayModeBar': False},
+                                style={'height': '100%'}
+                            )
+                        ]
+                    ),
+                    html.Div(
+                        style={'flex': '1', 'padding': '2px'},
+                        children=[
+                            dcc.Graph(
+                                figure=make_gauge(hw_ram, '#ff007a', "RAM", is_percentage=True),
+                                config={'displayModeBar': False},
+                                style={'height': '100%'}
+                            )
+                        ]
+                    )
+                ]
+            ))
         else:
             item = next((i for i in INTERFACES if i['id'] == box_id), None)
             if item:
@@ -365,16 +392,35 @@ def update_ui(n):
                 d_mbps = st['yd'][-1] if st['yd'] else 0
                 u_mbps = st['yu'][-1] if st['yu'] else 0
                 color = item['color']['down']
-                card_contents.append(html.Div([
-                    html.Div(item['display_name'], style={'color': color, 'fontSize': '0.8em', 'textAlign': 'center', 'letterSpacing': '2px'}),
-                    dcc.Graph(figure=make_gauge(d_mbps, color, "DOWN", item['limit']), config={'displayModeBar': False}),
-                    dcc.Graph(figure=make_gauge(u_mbps, item['color']['up'], "UP", item['limit']), config={'displayModeBar': False})
-                ]))
+                card_contents.append(html.Div(
+                    style={'display': 'flex', 'flexDirection': 'row', 'height': '100%'},
+                    children=[
+                        html.Div(
+                            style={'flex': '1', 'padding': '1px'},
+                            children=[
+                                dcc.Graph(
+                                    figure=make_gauge(d_mbps, color, "▼", item['limit']),
+                                    config={'displayModeBar': False},
+                                    style={'height': '100%'}
+                                )
+                            ]
+                        ),
+                        html.Div(
+                            style={'flex': '1', 'padding': '1px'},
+                            children=[
+                                dcc.Graph(
+                                    figure=make_gauge(u_mbps, item['color']['up'], "▲", item['limit']),
+                                    config={'displayModeBar': False},
+                                    style={'height': '100%'}
+                                )
+                            ]
+                        )
+                    ]
+                ))
     
     status = "🟢" if data_manager.connection_status else "🔴"
-    ts = data_manager.last_ts or "Esperando datos..."
-    error = f" ⚠️ {data_manager.last_error}" if data_manager.last_error else ""
-    return card_contents + [f"{status} LIVE · {ts} · {len(ALL_IDS)} interfaces{error}"]
+    ts = data_manager.last_ts or "---"
+    return card_contents + [f"{status} {ts}"]
 
 # ============================================
 # INICIO
