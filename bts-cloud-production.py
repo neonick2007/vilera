@@ -38,7 +38,7 @@ COLORS = [
     {'down': '#f59e0b', 'up': '#b45309', 'fill': 'rgba(245,158,11,0.06)'},
 ]
 
-# ⚠️ IMPORTANTE: Los IDS DEBEN ser válidos para HTML (solo letras, números, guiones y guiones bajos)
+# ⚠️ IMPORTANTE: IDS VÁLIDOS (solo letras, números, guiones y guiones bajos)
 INTERFACES = [
     {
         'id': 'sfp1-WAN-FIBEX',
@@ -73,7 +73,7 @@ INTERFACES = [
         'vlans': []
     },
     {
-        'id': 'pppoe-andres-bodega',  # ✅ ID válido (sin < >)
+        'id': 'pppoe-andres-bodega',
         'color': COLORS[4],
         'limit': 100,
         'display_name': '👤 Andrés Bodega',
@@ -81,7 +81,7 @@ INTERFACES = [
         'vlans': []
     },
     {
-        'id': 'pppoe-isaura-zambrano',  # ✅ ID válido (sin < >)
+        'id': 'pppoe-isaura-zambrano',
         'color': COLORS[5],
         'limit': 100,
         'display_name': '👤 Isaura Zambrano',
@@ -118,6 +118,19 @@ class BTSDataManager:
 data_manager = BTSDataManager()
 
 # ============================================
+# MAPEO DE NOMBRES (MikroTik -> Dashboard)
+# ============================================
+NAME_MAP = {
+    'sfp1-WAN-FIBEX': 'sfp1-WAN-FIBEX',
+    'bridge': 'bridge',
+    'ether2': 'ether2',
+    'ether1': 'ether1',
+    '<pppoe-andres.bodega>': 'pppoe-andres-bodega',
+    '<pppoe-isaura.zambrano>': 'pppoe-isaura-zambrano',
+    'ether6': 'ether6'
+}
+
+# ============================================
 # FUNCIÓN DE OBTENCIÓN DE DATOS
 # ============================================
 def fetch_mikrotik_data():
@@ -142,20 +155,9 @@ def fetch_mikrotik_data():
             timestamp = datetime.now().strftime("%H:%M:%S")
             data_manager.last_ts = timestamp
 
-            # Mapeo de nombres MikroTik a IDs del dashboard
-            mikrotik_names = {
-                'sfp1-WAN-FIBEX': 'sfp1-WAN-FIBEX',
-                'bridge': 'bridge',
-                'ether2': 'ether2',
-                'ether1': 'ether1',
-                '<pppoe-andres.bodega>': 'pppoe-andres-bodega',  # Mapeo del nombre real al ID válido
-                '<pppoe-isaura.zambrano>': 'pppoe-isaura-zambrano',  # Mapeo del nombre real al ID válido
-                'ether6': 'ether6'
-            }
-
             for uid in ALL_IDS:
-                # Buscar el nombre real en el MikroTik
-                mikrotik_name = next((k for k, v in mikrotik_names.items() if v == uid), uid)
+                # Buscar el nombre real en el MikroTik usando el mapa
+                mikrotik_name = next((k for k, v in NAME_MAP.items() if v == uid), uid)
                 raw = next((item for item in raw_data if item.get('name') == mikrotik_name), {})
                 rx = int(raw.get('rx-byte', 0)) if raw else 0
                 tx = int(raw.get('tx-byte', 0)) if raw else 0
@@ -244,7 +246,7 @@ def make_gauge(val, color, title, limit=None, is_percentage=False):
         font={'family': 'Share Tech Mono'},
         title={
             'text': f'<b>{title}</b>',
-            'font': {'color': color, 'size': 9, 'family': 'Share Tech Mono'},
+            'font': {'color': color, 'size': 9},
             'y': 0.92, 'x': 0.5
         }
     )
